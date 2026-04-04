@@ -12,11 +12,11 @@ LOG_FILE="$ROOT_DIR/llama-server.log"
 # MODEL_URL="https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf"
 # MODEL_FILE="$MODEL_DIR/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf"
 
-# MODEL_URL="https://huggingface.co/mudler/gemma-4-26B-A4B-it-APEX-GGUF/resolve/main/gemma-4-26B-A4B-APEX-Quality.gguf"
-# MODEL_FILE="$MODEL_DIR/gemma-4-26B-A4B-APEX-Quality.gguf"
+MODEL_URL="https://huggingface.co/mudler/gemma-4-26B-A4B-it-APEX-GGUF/resolve/main/gemma-4-26B-A4B-APEX-Quality.gguf"
+MODEL_FILE="$MODEL_DIR/gemma-4-26B-A4B-APEX-Quality.gguf"
 
-MODEL_URL="https://huggingface.co/Jackrong/Qwopus3.5-27B-v3-GGUF/resolve/main/Qwopus3.5-27B-v3-Q4_K_M.gguf"
-MODEL_FILE="$MODEL_DIR/Qwopus3.5-27B-v3-Q4_K_M.gguf"
+# MODEL_URL="https://huggingface.co/Jackrong/Qwopus3.5-27B-v3-GGUF/resolve/main/Qwopus3.5-27B-v3-Q4_K_M.gguf"
+# MODEL_FILE="$MODEL_DIR/Qwopus3.5-27B-v3-Q4_K_M.gguf"
 
 
 mkdir -p "$MODEL_DIR"
