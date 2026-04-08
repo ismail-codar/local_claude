@@ -17,25 +17,26 @@ ENV_VARS = {
 }
 
 # ──────────────────────────────────────────────────────────────
-# L40S tuned defaults (vLLM nightly + DFlash compatible)
+# L40S 48GB SAFE DEFAULTS: Use 27B model (35B does not fit)
 # ──────────────────────────────────────────────────────────────
 DEFAULTS = {
-    "BASE_MODEL": "Qwen/Qwen3.5-35B-A3B",
-    "DRAFT_MODEL": "z-lab/Qwen3.5-35B-A3B-DFlash",
+    # ✅ Use 27B variant - fits on single L40S with DFlash
+    "BASE_MODEL": "Qwen/Qwen3.5-27B",
+    "DRAFT_MODEL": "z-lab/Qwen3.5-27B-DFlash",
     "HOST": "0.0.0.0",
     "PORT": "8001",
-    "NUM_SPEC_TOKENS": "24",
+    "NUM_SPEC_TOKENS": "16",
     "ATTENTION_BACKEND": "flash_attn",
-    "MAX_BATCHED_TOKENS": "49152",
-    "GPU_MEMORY_UTILIZATION": "0.88",
+    "MAX_BATCHED_TOKENS": "32768",
+    "GPU_MEMORY_UTILIZATION": "0.82",  # Balanced for 27B + draft + cache
     "DTYPE": os.getenv("DTYPE", "bfloat16"),
     "TENSOR_PARALLEL_SIZE": "1",
     "MAX_MODEL_LEN": "32768",
     "BLOCK_SIZE": "32",
 }
 
-PID_FILENAME = "vllm_dflash_qwen35_35b_a3b.pid"
-LOG_FILENAME = "vllm_dflash_qwen35_35b_a3b.log"
+PID_FILENAME = "vllm_dflash_qwen35_27b.pid"
+LOG_FILENAME = "vllm_dflash_qwen35_27b.log"
 
 
 def _ensure_env():
@@ -57,10 +58,11 @@ def _ensure_env():
         "HUGGINGFACE_HUB_CACHE": ENV_VARS["HF_HOME"],
         "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1",
         "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
+        # Memory management tuning
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,max_split_size_mb:256",
         "CUDA_LAUNCH_BLOCKING": "0",
         "NCCL_P2P_DISABLE": "0",
         "TOKENIZERS_PARALLELISM": "false",
-        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512,expandable_segments:True",
     }
 
     run_dir = Path(ENV_VARS["RUN_DIR"])
@@ -71,12 +73,10 @@ def _ensure_env():
 
 
 def _is_running(pid: str) -> bool:
-    """Check if a process with given PID is still running."""
     return subprocess.run(["kill", "-0", pid], capture_output=True).returncode == 0
 
 
 def install():
-    """Install dependencies using uv."""
     print("Installing dflash …")
     subprocess.run(["uv", "sync", "--frozen"], cwd=SCRIPT_DIR, check=True)
     print("Done.")
@@ -88,7 +88,6 @@ def run():
     run_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if already running
     if pid_file.exists():
         stored = pid_file.read_text().strip()
         if stored and _is_running(stored):
@@ -97,7 +96,6 @@ def run():
         pid_file.unlink(missing_ok=True)
 
     def download_if_missing(repo_id: str):
-        """Download model from HF if not already cached."""
         cache_path = Path(env["HF_HOME"]) / f"models--{repo_id.replace('/', '--')}"
         if cache_path.exists() and any(cache_path.iterdir()):
             print(f"Model cached: {repo_id}")
@@ -123,19 +121,15 @@ def run():
 
     log_file = log_dir / LOG_FILENAME
 
-    # ✅ Speculative config: draft_model method + disable multimodal for draft
     speculative_config = json.dumps(
         {
             "method": "draft_model",
             "model": DEFAULTS["DRAFT_MODEL"],
             "num_speculative_tokens": int(DEFAULTS["NUM_SPEC_TOKENS"]),
-            "draft_model_config": {
-                "limit_mm_per_prompt": {},  # Disable all multimodal for draft
-            },
+            "draft_model_config": {"limit_mm_per_prompt": {}},
         }
     )
 
-    # ✅ FIX: --limit-mm-per-prompt expects a JSON string, not key=value format
     limit_mm_json = json.dumps({"image": 0, "video": 0, "audio": 0})
 
     cmd = [
@@ -164,27 +158,27 @@ def run():
         DEFAULTS["ATTENTION_BACKEND"],
         "--enable-chunked-prefill",
         "--trust-remote-code",
-        # ✅ FIX: Proper JSON format for multimodal disable
         "--limit-mm-per-prompt",
         limit_mm_json,
         "--speculative-config",
         speculative_config,
+        "--enforce-eager",  # Reduce CUDA graph memory overhead
     ]
 
     print("Starting vLLM server …")
-    print(f"Attention backend: {DEFAULTS['ATTENTION_BACKEND']}")
-    print(f"Speculative method: draft_model (DFlash auto-detected)")
-    print(f"Draft model: {DEFAULTS['DRAFT_MODEL']}")
-    print(f"Multimodal: DISABLED (required for draft model speculative decoding)")
+    print(f"Model: {DEFAULTS['BASE_MODEL']} (27B - fits on L40S 48GB)")
+    print(f"Draft: {DEFAULTS['DRAFT_MODEL']}")
+    print(
+        f"GPU memory: {DEFAULTS['GPU_MEMORY_UTILIZATION']} | Batch tokens: {DEFAULTS['MAX_BATCHED_TOKENS']}"
+    )
+    print(
+        f"Speculative tokens: {DEFAULTS['NUM_SPEC_TOKENS']} | Backend: {DEFAULTS['ATTENTION_BACKEND']}"
+    )
     print(f"Log: {log_file}")
 
     with open(log_file, "a") as lf:
         proc = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=lf,
-            stderr=lf,
-            start_new_session=True,
+            cmd, env=env, stdout=lf, stderr=lf, start_new_session=True
         )
 
     pid_file.write_text(str(proc.pid))
@@ -193,43 +187,33 @@ def run():
 
 
 def stop():
-    """Stop the running vLLM server."""
     _, _, _, pid_file = _ensure_env()
-
     if not pid_file.exists():
         print("No PID file found.")
         return
-
     pid = pid_file.read_text().strip()
-
     if not _is_running(pid):
         pid_file.unlink(missing_ok=True)
         print("Process not found. Cleaned.")
         return
-
     print(f"Stopping server (PID={pid}) …")
     subprocess.run(["kill", "-TERM", pid], check=False)
-
     for _ in range(30):
         time.sleep(1)
         if not _is_running(pid):
             pid_file.unlink(missing_ok=True)
             print("Stopped.")
             return
-
     subprocess.run(["kill", "-9", pid])
     pid_file.unlink(missing_ok=True)
     print("Force killed.")
 
 
 def status():
-    """Check server status."""
     _, _, log_dir, pid_file = _ensure_env()
-
     if not pid_file.exists():
         print("Status: stopped")
         return
-
     pid = pid_file.read_text().strip()
     if pid and _is_running(pid):
         print(f"Status: running (PID={pid})")
@@ -240,18 +224,10 @@ def status():
 
 
 def main():
-    """CLI entry point."""
-    commands = {
-        "install": install,
-        "run": run,
-        "stop": stop,
-        "status": status,
-    }
-
+    commands = {"install": install, "run": run, "stop": stop, "status": status}
     if len(sys.argv) < 2 or sys.argv[1] not in commands:
         print(f"Usage: dflash <{'|'.join(commands)}>")
         sys.exit(1)
-
     commands[sys.argv[1]]()
 
 
