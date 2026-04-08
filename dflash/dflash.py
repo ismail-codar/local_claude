@@ -25,7 +25,7 @@ DEFAULTS = {
     "HOST": "0.0.0.0",
     "PORT": "8001",
     "NUM_SPEC_TOKENS": "24",
-    "ATTENTION_BACKEND": "flash_attn",  # lowercase for vLLM CLI
+    "ATTENTION_BACKEND": "flash_attn",
     "MAX_BATCHED_TOKENS": "49152",
     "GPU_MEMORY_UTILIZATION": "0.88",
     "DTYPE": os.getenv("DTYPE", "bfloat16"),
@@ -53,14 +53,10 @@ def _ensure_env():
     env = {
         **os.environ,
         **ENV_VARS,
-        # HuggingFace cache config (use HF_HOME only, TRANSFORMERS_CACHE is deprecated)
         "HF_HOME": ENV_VARS["HF_HOME"],
         "HUGGINGFACE_HUB_CACHE": ENV_VARS["HF_HOME"],
-        # vLLM specific
         "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1",
         "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
-        # NOTE: VLLM_ATTENTION_BACKEND removed - deprecated in vLLM >= 0.19.0
-        # CUDA / NCCL tuning
         "CUDA_LAUNCH_BLOCKING": "0",
         "NCCL_P2P_DISABLE": "0",
         "TOKENIZERS_PARALLELISM": "false",
@@ -122,22 +118,25 @@ def run():
             check=True,
         )
 
-    # Ensure both models are available
     download_if_missing(DEFAULTS["BASE_MODEL"])
     download_if_missing(DEFAULTS["DRAFT_MODEL"])
 
     log_file = log_dir / LOG_FILENAME
 
-    # ✅ FIX: Use "draft_model" method - DFlash is auto-detected from model architecture
-    # vLLM validates 'method' against a literal enum; "dflash" is not a valid value
-    # The DFlash draft model's config triggers block diffusion automatically
+    # ✅ Speculative config: draft_model method + disable multimodal for draft
     speculative_config = json.dumps(
         {
-            "method": "draft_model",  # ← Correct value for vLLM SpeculativeConfig
+            "method": "draft_model",
             "model": DEFAULTS["DRAFT_MODEL"],
             "num_speculative_tokens": int(DEFAULTS["NUM_SPEC_TOKENS"]),
+            "draft_model_config": {
+                "limit_mm_per_prompt": {},  # Disable all multimodal for draft
+            },
         }
     )
+
+    # ✅ FIX: --limit-mm-per-prompt expects a JSON string, not key=value format
+    limit_mm_json = json.dumps({"image": 0, "video": 0, "audio": 0})
 
     cmd = [
         "uv",
@@ -161,18 +160,22 @@ def run():
         DEFAULTS["TENSOR_PARALLEL_SIZE"],
         "--block-size",
         DEFAULTS["BLOCK_SIZE"],
-        "--attention-backend",  # ✓ Required CLI flag for DFlash
+        "--attention-backend",
         DEFAULTS["ATTENTION_BACKEND"],
-        "--enable-chunked-prefill",  # Boolean flag, no value
-        "--trust-remote-code",  # Required for custom model code
+        "--enable-chunked-prefill",
+        "--trust-remote-code",
+        # ✅ FIX: Proper JSON format for multimodal disable
+        "--limit-mm-per-prompt",
+        limit_mm_json,
         "--speculative-config",
         speculative_config,
     ]
 
     print("Starting vLLM server …")
     print(f"Attention backend: {DEFAULTS['ATTENTION_BACKEND']}")
-    print(f"Speculative method: draft_model (DFlash auto-detected from draft model)")
+    print(f"Speculative method: draft_model (DFlash auto-detected)")
     print(f"Draft model: {DEFAULTS['DRAFT_MODEL']}")
+    print(f"Multimodal: DISABLED (required for draft model speculative decoding)")
     print(f"Log: {log_file}")
 
     with open(log_file, "a") as lf:
@@ -207,7 +210,6 @@ def stop():
     print(f"Stopping server (PID={pid}) …")
     subprocess.run(["kill", "-TERM", pid], check=False)
 
-    # Wait for graceful shutdown
     for _ in range(30):
         time.sleep(1)
         if not _is_running(pid):
@@ -215,7 +217,6 @@ def stop():
             print("Stopped.")
             return
 
-    # Force kill if still running
     subprocess.run(["kill", "-9", pid])
     pid_file.unlink(missing_ok=True)
     print("Force killed.")
