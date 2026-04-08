@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "=== Gemma-4 26B-A4B + TurboQuant (L40S 48GB - aria2c indir + models'ten çalıştır) ==="
+echo "=== Local LLM + TurboQuant (L40S 48GB - aria2c indir + models'ten çalıştır) ==="
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"

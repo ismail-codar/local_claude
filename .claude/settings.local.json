@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python3 -c ':*)",
       "Bash(python -c ':*)",
-      "Bash(curl -sL \"https://api.github.com/repos/ggerganov/llama.cpp/releases/latest\")"
+      "Bash(curl -sL \"https://api.github.com/repos/ggerganov/llama.cpp/releases/latest\")",
+      "Bash(ln:*)"
     ]
   }
 }
