@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-set -a
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
@@ -12,8 +10,6 @@ else
   echo "Hata: .env dosyasi bulunamadi: $ENV_FILE"
   exit 1
 fi
-
-set +a
 
 : "${LANGFUSE_SECRET_KEY:?LANGFUSE_SECRET_KEY tanimli degil}"
 : "${LANGFUSE_PUBLIC_KEY:?LANGFUSE_PUBLIC_KEY tanimli degil}"
@@ -31,10 +27,8 @@ fi
 
 cd "$SCRIPT_DIR"
 
-uv run litellm --config config.yaml --port 8010 &
+nohup uv run litellm --config config.yaml --port 8010 >/dev/null 2>&1 &
 PID=$!
 
 echo "$PID" > "$PID_FILE"
 echo "LiteLLM baslatildi. PID: $PID"
-
-wait "$PID"
