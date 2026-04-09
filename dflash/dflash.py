@@ -1,4 +1,4 @@
-"""CLI for dflash server — optimised for NVIDIA L40S (48 GB VRAM, Ada Lovelace)."""
+"""CLI for dflash server — updated for vLLM 0.11."""
 
 import json
 import os
@@ -16,27 +16,25 @@ ENV_VARS = {
     "HF_HOME": str(SCRIPT_DIR / ".cache" / "huggingface"),
 }
 
-# ──────────────────────────────────────────────────────────────
-# L40S 48GB SAFE DEFAULTS: Use 27B model (35B does not fit)
-# ──────────────────────────────────────────────────────────────
 DEFAULTS = {
-    # ✅ Use 27B variant - fits on single L40S with DFlash
-    "BASE_MODEL": "Qwen/Qwen3.5-27B",
-    "DRAFT_MODEL": "z-lab/Qwen3.5-27B-DFlash",
+    "BASE_MODEL": "Qwen/Qwen3.5-9B",
+    "DRAFT_MODEL": "z-lab/Qwen3.5-9B-DFlash",
     "HOST": "0.0.0.0",
     "PORT": "8001",
     "NUM_SPEC_TOKENS": "16",
-    "ATTENTION_BACKEND": "flash_attn",
+    # vLLM 0.11 uses enum-style backend names in CLI/docs.
+    "ATTENTION_BACKEND": "FLASH_ATTN",
     "MAX_BATCHED_TOKENS": "32768",
-    "GPU_MEMORY_UTILIZATION": "0.82",  # Balanced for 27B + draft + cache
+    "GPU_MEMORY_UTILIZATION": "0.82",
     "DTYPE": os.getenv("DTYPE", "bfloat16"),
     "TENSOR_PARALLEL_SIZE": "1",
     "MAX_MODEL_LEN": "32768",
     "BLOCK_SIZE": "32",
+    "SEED": "42",
 }
 
-PID_FILENAME = "vllm_dflash_qwen35_27b.pid"
-LOG_FILENAME = "vllm_dflash_qwen35_27b.log"
+PID_FILENAME = "vllm_dflash_qwen35_9b.pid"
+LOG_FILENAME = "vllm_dflash_qwen35_9b.log"
 
 
 def _ensure_env():
@@ -58,7 +56,8 @@ def _ensure_env():
         "HUGGINGFACE_HUB_CACHE": ENV_VARS["HF_HOME"],
         "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1",
         "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
-        # Memory management tuning
+        # Keep V1 explicit for vLLM 0.11 behavior consistency.
+        "VLLM_USE_V1": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,max_split_size_mb:256",
         "CUDA_LAUNCH_BLOCKING": "0",
         "NCCL_P2P_DISABLE": "0",
@@ -121,16 +120,14 @@ def run():
 
     log_file = log_dir / LOG_FILENAME
 
+    # vLLM 0.11 draft-model speculation config.
     speculative_config = json.dumps(
         {
-            "method": "draft_model",
             "model": DEFAULTS["DRAFT_MODEL"],
             "num_speculative_tokens": int(DEFAULTS["NUM_SPEC_TOKENS"]),
-            "draft_model_config": {"limit_mm_per_prompt": {}},
+            "method": "draft_model",
         }
     )
-
-    limit_mm_json = json.dumps({"image": 0, "video": 0, "audio": 0})
 
     cmd = [
         "uv",
@@ -142,6 +139,8 @@ def run():
         DEFAULTS["HOST"],
         "--port",
         DEFAULTS["PORT"],
+        "--seed",
+        DEFAULTS["SEED"],
         "--dtype",
         DEFAULTS["DTYPE"],
         "--gpu-memory-utilization",
@@ -158,27 +157,34 @@ def run():
         DEFAULTS["ATTENTION_BACKEND"],
         "--enable-chunked-prefill",
         "--trust-remote-code",
-        "--limit-mm-per-prompt",
-        limit_mm_json,
+        "--language-model-only",
         "--speculative-config",
         speculative_config,
-        "--enforce-eager",  # Reduce CUDA graph memory overhead
+        "--enforce-eager",
     ]
 
     print("Starting vLLM server …")
-    print(f"Model: {DEFAULTS['BASE_MODEL']} (27B - fits on L40S 48GB)")
+    print(f"Model: {DEFAULTS['BASE_MODEL']}")
     print(f"Draft: {DEFAULTS['DRAFT_MODEL']}")
     print(
-        f"GPU memory: {DEFAULTS['GPU_MEMORY_UTILIZATION']} | Batch tokens: {DEFAULTS['MAX_BATCHED_TOKENS']}"
+        f"GPU memory: {DEFAULTS['GPU_MEMORY_UTILIZATION']} | "
+        f"Batch tokens: {DEFAULTS['MAX_BATCHED_TOKENS']}"
     )
     print(
-        f"Speculative tokens: {DEFAULTS['NUM_SPEC_TOKENS']} | Backend: {DEFAULTS['ATTENTION_BACKEND']}"
+        f"Speculative tokens: {DEFAULTS['NUM_SPEC_TOKENS']} | "
+        f"Backend: {DEFAULTS['ATTENTION_BACKEND']}"
     )
     print(f"Log: {log_file}")
 
+    print("cmd: ", " ".join(cmd))
+
     with open(log_file, "a") as lf:
         proc = subprocess.Popen(
-            cmd, env=env, stdout=lf, stderr=lf, start_new_session=True
+            cmd,
+            env=env,
+            stdout=lf,
+            stderr=lf,
+            start_new_session=True,
         )
 
     pid_file.write_text(str(proc.pid))
@@ -191,11 +197,13 @@ def stop():
     if not pid_file.exists():
         print("No PID file found.")
         return
+
     pid = pid_file.read_text().strip()
     if not _is_running(pid):
         pid_file.unlink(missing_ok=True)
         print("Process not found. Cleaned.")
         return
+
     print(f"Stopping server (PID={pid}) …")
     subprocess.run(["kill", "-TERM", pid], check=False)
     for _ in range(30):
@@ -204,7 +212,8 @@ def stop():
             pid_file.unlink(missing_ok=True)
             print("Stopped.")
             return
-    subprocess.run(["kill", "-9", pid])
+
+    subprocess.run(["kill", "-9", pid], check=False)
     pid_file.unlink(missing_ok=True)
     print("Force killed.")
 
@@ -214,6 +223,7 @@ def status():
     if not pid_file.exists():
         print("Status: stopped")
         return
+
     pid = pid_file.read_text().strip()
     if pid and _is_running(pid):
         print(f"Status: running (PID={pid})")
@@ -224,7 +234,12 @@ def status():
 
 
 def main():
-    commands = {"install": install, "run": run, "stop": stop, "status": status}
+    commands = {
+        "install": install,
+        "run": run,
+        "stop": stop,
+        "status": status,
+    }
     if len(sys.argv) < 2 or sys.argv[1] not in commands:
         print(f"Usage: dflash <{'|'.join(commands)}>")
         sys.exit(1)

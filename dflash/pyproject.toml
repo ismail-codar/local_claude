@@ -3,14 +3,13 @@ name = "dflash-server"
 version = "0.1.0"
 description = "DFlash speculative decoding server wrapper"
 readme = "README.md"
-requires-python = ">=3.11"
-
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "huggingface_hub[cli]>=0.24.0",
-    "vllm>=0.15"
+    "vllm",
+    "transformers>=5.0.0",
 ]
 
-# CLI entry point (dflash.py'deki main() fonksiyonuna işaret eder)
 [project.scripts]
 dflash = "dflash:main"
 
@@ -19,7 +18,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["dflash"]  # SADECE dflash.py modül olarak
+py-modules = ["dflash"]
 
 [tool.uv]
 environments = ["sys_platform == 'linux'"]

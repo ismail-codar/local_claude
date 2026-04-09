@@ -1,0 +1,10 @@
+[project]
+name = "litellm_proxy"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langfuse>=4.1.0",
+    "litellm[proxy]>=1.83.4",
+]
