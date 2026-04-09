@@ -27,3 +27,6 @@ curl http://127.0.0.1:8010/v1/chat/completions \
     ]
   }'
 ```
+
+## İzleme
+lsof -i :8010

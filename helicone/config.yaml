@@ -1,12 +1,9 @@
 model_list:
   - model_name: Wrench-35B-A3B-Q4_K_M-GGUF.gguf
     litellm_params:
-      model: Wrench-35B-A3B-Q4_K_M-GGUF.gguf
-      api_base: "http://localhost:8001"
-      api_key: "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"
+      model: openai/Wrench-35B-A3B-Q4_K_M-GGUF.gguf
+      api_base: "http://localhost:8001/v1"
+      api_key: "dummy"
 
 litellm_settings:
   success_callbacks: ["helicone"]
-
-general_settings:
-  master_key: "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"
