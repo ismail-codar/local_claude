@@ -1,3 +1,6 @@
+#!/bin/sh
+set -e
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 PID_FILE="$SCRIPT_DIR/.litellm.pid"

@@ -6,13 +6,7 @@ model_list:
       api_key: "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"
 
 litellm_settings:
-  success_callback: ["helicone"]
-
-environment_variables:
-  HELICONE_API_KEY: "os.environ/HELICONE_API_KEY"
-  # HELICONE_API_BASE: "os.environ/HELICONE_API_BASE"  # opsiyonel
+  success_callbacks: ["helicone"]
 
 general_settings:
   master_key: "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"
-  disable_spend_logs: false
-  disable_error_logs: false
