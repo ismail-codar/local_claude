@@ -5,6 +5,9 @@ model_list:
       api_base: "http://localhost:8001/v1"
       api_key: "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"
 
+environment_variables:
+  HELICONE_API_KEY: "sk-helicone-ym3mj4y-65zuwey-uogw2gi-p6i3cpa"
+
 litellm_settings:
-  success_callbacks: ["helicone"]
-  failure_callbacks: ["helicone"]
+  success_callback: ["helicone"]
+  failure_callback: ["helicone"]
