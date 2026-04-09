@@ -1,11 +1,12 @@
-#!/usr/bin/env bash
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 PID_FILE="$SCRIPT_DIR/.litellm.pid"
+LOG_FILE="$SCRIPT_DIR/litellm.log"
 
 if [ -f "$ENV_FILE" ]; then
+  set -a
   . "$ENV_FILE"
+  set +a
 else
   echo "Hata: .env dosyasi bulunamadi: $ENV_FILE"
   exit 1
@@ -26,9 +27,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 cd "$SCRIPT_DIR"
-
-nohup uv run litellm --config config.yaml --port 8010 >/dev/null 2>&1 &
+nohup uv run litellm --config config.yaml --port 8010 > "$LOG_FILE" 2>&1 &
 PID=$!
-
 echo "$PID" > "$PID_FILE"
-echo "LiteLLM baslatildi. PID: $PID"
+echo "LiteLLM baslatildi. PID: $PID  |  Log: $LOG_FILE"

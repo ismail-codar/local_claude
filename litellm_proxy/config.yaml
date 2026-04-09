@@ -11,5 +11,5 @@ litellm_settings:
 
 general_settings:
   master_key: "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"
-  disable_spend_logs: true
-  disable_error_logs: true
+  disable_spend_logs: false
+  disable_error_logs: false
