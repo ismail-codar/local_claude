@@ -3,7 +3,7 @@ name = "litellm_proxy"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "litellm[proxy]==1.83.4",
-].4",
+]

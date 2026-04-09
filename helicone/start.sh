@@ -13,8 +13,6 @@ else
 fi
 
 : "${HELICONE_API_KEY:?HELICONE_API_KEY tanimli degil}"
-# Opsiyonel: self-host veya ozel endpoint kullanacaksaniz
-# : "${HELICONE_API_BASE:?HELICONE_API_BASE tanimli degil}"
 
 if [ -f "$PID_FILE" ]; then
   OLD_PID="$(cat "$PID_FILE")"

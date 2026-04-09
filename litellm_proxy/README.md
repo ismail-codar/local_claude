@@ -2,7 +2,14 @@
 
 LiteLLM proxy server kurulumu.
 
-## Kullanım
+## .env
+```sh
+HELICONE_API_KEY=sk-...
+# Opsiyonel:
+# HELICONE_API_BASE=https://api.helicone.ai
+```
+
+## Kullanim
 ```sh
 uv init
 uv venv
