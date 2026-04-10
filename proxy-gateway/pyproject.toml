@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proxy-gateway"
+version = "0.1.0"
+description = "FastAPI proxy/gateway: :8010 → :8001 + Langfuse loglama"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+]
+
+[project.scripts]
+gateway = "gateway_cli:main"
+
+[tool.setuptools]
+py-modules = ["gateway_cli", "proxy_gateway"]

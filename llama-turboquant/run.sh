@@ -24,34 +24,34 @@ LOG_FILE="$ROOT_DIR/llama-server.log"
 # MODEL_FILE="$MODEL_DIR/Qwopus3.5-27B-v3-Q4_K_M.gguf"
 
 # 138 token/saniye
-MODEL_URL="https://huggingface.co/ClankLabs/Wrench-35B-A3B-Q4_K_M-GGUF/resolve/main/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
-MODEL_FILE="$MODEL_DIR/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
+# MODEL_URL="https://huggingface.co/ClankLabs/Wrench-35B-A3B-Q4_K_M-GGUF/resolve/main/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
+# MODEL_FILE="$MODEL_DIR/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
+
+# 105 token/saniye
+MODEL_URL="https://huggingface.co/Jackrong/Gemopus-4-26B-A4B-it-GGUF/resolve/main/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
+MODEL_FILE="$MODEL_DIR/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
 
 
 mkdir -p "$MODEL_DIR"
 cd "$LLAMA_DIR"
 
-if [ -f "$MODEL_FILE" ]; then
-    echo "✅ Model zaten mevcut: $MODEL_FILE"
-else
-    echo "⬇️ Model indiriliyor:"
-    echo "   $MODEL_URL"
+echo "⬇️ Model indiriliyor:"
+echo "   $MODEL_URL"
 
-    if command -v aria2c >/dev/null 2>&1; then
-        aria2c \
-          --dir="$MODEL_DIR" \
-          --out="$(basename "$MODEL_FILE")" \
-          --continue=true \
-          --max-connection-per-server=16 \
-          --split=16 \
-          --min-split-size=10M \
-          --file-allocation=none \
-          "$MODEL_URL"
-    else
-        echo "❌ aria2c bulunamadı. Kur:"
-        echo "   Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y aria2"
-        exit 1
-    fi
+if command -v aria2c >/dev/null 2>&1; then
+    aria2c \
+        --dir="$MODEL_DIR" \
+        --out="$(basename "$MODEL_FILE")" \
+        --continue=true \
+        --max-connection-per-server=16 \
+        --split=16 \
+        --min-split-size=10M \
+        --file-allocation=none \
+        "$MODEL_URL"
+else
+    echo "❌ aria2c bulunamadı. Kur:"
+    echo "   Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y aria2"
+    exit 1
 fi
 
 echo "TurboQuant KV Cache + 256K Context ile arka planda başlatılıyor..."

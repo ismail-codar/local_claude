@@ -1,2 +1,2 @@
-echo "curl -s http://127.0.0.1:8010/api/tunnels"
+echo "curl -s http://http://10.198.15.173:4040/api/tunnels"
 nohup ngrok http 8010 >/dev/null 2>&1 &
