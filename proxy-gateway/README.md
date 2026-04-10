@@ -25,6 +25,8 @@ gateway start \
   --target http://localhost:8001 \
   --lf-public-key pk-lf-xxx \
   --lf-secret-key sk-lf-xxx
+
+gateway start --foreground --verbose
 ```
 
 ## Kullanım

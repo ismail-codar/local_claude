@@ -5,6 +5,8 @@ Ports 8010 → 8001 ile şeffaf proxy + Langfuse loglama
 
 import asyncio
 import json
+import os
+import shlex
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -15,10 +17,6 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
-# ──────────────────────────────────────────────
-# Langfuse istemcisi (lightweight, SDK'sız)
-# ──────────────────────────────────────────────
-
 
 class LangfuseLogger:
     """Langfuse REST API ile minimum bağımlılıkla loglama."""
@@ -28,9 +26,13 @@ class LangfuseLogger:
         public_key: str,
         secret_key: str,
         host: str = "https://cloud.langfuse.com",
+        curl_log: str = "",
     ):
         self.host = host.rstrip("/")
+        self.public_key = public_key
+        self.secret_key = secret_key
         self.auth = (public_key, secret_key)
+        self.curl_log = (curl_log or "").strip().lower()
         self._client: Optional[httpx.AsyncClient] = None
 
     async def start(self):
@@ -43,6 +45,44 @@ class LangfuseLogger:
     async def stop(self):
         if self._client:
             await self._client.aclose()
+
+    def _should_log_curl(self) -> bool:
+        return self.curl_log in {"1", "true", "yes", "on", "masked", "full"}
+
+    def _should_log_full_secret(self) -> bool:
+        return self.curl_log == "full"
+
+    def _mask(self, value: str) -> str:
+        if not value:
+            return ""
+        if len(value) <= 8:
+            return "*" * len(value)
+        return f"{value[:4]}...{value[-4:]}"
+
+    def _build_curl_command(self, url: str, payload: dict) -> str:
+        json_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+        public_key = self.public_key
+        secret_key = (
+            self.secret_key
+            if self._should_log_full_secret()
+            else self._mask(self.secret_key)
+        )
+
+        parts = [
+            "curl",
+            "-i",
+            "-X",
+            "POST",
+            shlex.quote(url),
+            "-u",
+            shlex.quote(f"{public_key}:{secret_key}"),
+            "-H",
+            shlex.quote("Content-Type: application/json"),
+            "--data-raw",
+            shlex.quote(json_body),
+        ]
+        return " ".join(parts)
 
     async def log_request(
         self,
@@ -60,6 +100,8 @@ class LangfuseLogger:
         if not self._client:
             return
 
+        started_at = datetime.utcnow().isoformat() + "Z"
+
         # İstek gövdesini parse et (OpenAI formatı varsayımı)
         req_json: dict = {}
         try:
@@ -73,26 +115,26 @@ class LangfuseLogger:
         except Exception:
             res_json = {"raw": response_body.decode(errors="replace")[:2000]}
 
-        # Model bilgisini çıkar
         model = req_json.get("model", "unknown")
         messages = req_json.get("messages", [])
-
-        # Kullanım istatistikleri
         usage = res_json.get("usage", {})
+
+        generation_id = str(uuid.uuid4())
 
         payload = {
             "batch": [
                 {
-                    "id": str(uuid.uuid4()),
-                    "type": "generation",
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "id": generation_id,
+                    "type": "generation-create",
+                    "timestamp": started_at,
                     "body": {
+                        "id": generation_id,
                         "traceId": trace_id,
                         "name": f"{method} {path}",
                         "model": model,
                         "input": messages or req_json,
                         "output": res_json.get("choices", res_json),
-                        "startTime": datetime.utcnow().isoformat() + "Z",
+                        "startTime": started_at,
                         "metadata": {
                             "method": method,
                             "path": path,
@@ -111,18 +153,21 @@ class LangfuseLogger:
             ]
         }
 
+        ingestion_url = f"{self.host}/api/public/ingestion"
+
+        if self._should_log_curl():
+            print(f"[Langfuse][{trace_id[:8]}] CURL")
+            print(self._build_curl_command(ingestion_url, payload))
+
         try:
-            resp = await self._client.post(
-                f"{self.host}/api/public/ingestion", json=payload
+            resp = await self._client.post(ingestion_url, json=payload)
+            print(
+                f"[Langfuse][{trace_id[:8]}] status={resp.status_code} "
+                f"body={resp.text[:1000]}"
             )
             resp.raise_for_status()
         except Exception as e:
-            print(f"[Langfuse] Log gönderilemedi: {e}")
-
-
-# ──────────────────────────────────────────────
-# Uygulama fabrikası
-# ──────────────────────────────────────────────
+            print(f"[Langfuse][{trace_id[:8]}] Log gönderilemedi: {e}")
 
 
 def create_app(
@@ -130,6 +175,7 @@ def create_app(
     langfuse_public_key: str = "",
     langfuse_secret_key: str = "",
     langfuse_host: str = "https://cloud.langfuse.com",
+    langfuse_curl_log: str = "",
     verbose: bool = False,
 ) -> FastAPI:
     logger = (
@@ -137,6 +183,7 @@ def create_app(
             public_key=langfuse_public_key,
             secret_key=langfuse_secret_key,
             host=langfuse_host,
+            curl_log=langfuse_curl_log,
         )
         if langfuse_public_key and langfuse_secret_key
         else None
@@ -147,6 +194,8 @@ def create_app(
         if logger:
             await logger.start()
             print(f"[Gateway] Langfuse loglama aktif → {langfuse_host}")
+            if langfuse_curl_log:
+                print(f"[Gateway] LANGFUSE_CURL_LOG aktif → {langfuse_curl_log}")
         async with httpx.AsyncClient(
             base_url=target_url,
             timeout=httpx.Timeout(60.0, connect=10.0),
@@ -170,16 +219,13 @@ def create_app(
         trace_id = str(uuid.uuid4())
         start = time.monotonic()
 
-        # İstek gövdesini oku
         body = await request.body()
 
-        # Hedef URL
         url = httpx.URL(
             path=f"/{path}",
             query=request.url.query.encode("utf-8"),
         )
 
-        # Başlıkları aktar (host hariç)
         headers = {
             k: v
             for k, v in request.headers.items()
@@ -190,7 +236,6 @@ def create_app(
         if verbose:
             print(f"[{trace_id[:8]}] {request.method} /{path}")
 
-        # Streaming mi?
         is_stream = _is_streaming_request(body)
 
         if is_stream:
@@ -207,7 +252,6 @@ def create_app(
                 verbose,
             )
 
-        # Normal (buffered) proxy
         try:
             resp = await client.request(
                 method=request.method,
@@ -228,7 +272,6 @@ def create_app(
         if verbose:
             print(f"[{trace_id[:8]}] ← {resp.status_code}  {duration_ms:.0f}ms")
 
-        # Langfuse'a gönder (arka planda)
         if logger:
             asyncio.create_task(
                 logger.log_request(
@@ -243,7 +286,6 @@ def create_app(
                 )
             )
 
-        # Yanıt başlıklarını temizle
         resp_headers = {
             k: v
             for k, v in resp.headers.items()
@@ -274,21 +316,27 @@ async def _handle_streaming(
     """SSE/streaming yanıtları chunk-by-chunk ilet, sonunda logla."""
 
     chunks: list[bytes] = []
+    upstream_status_code = 200
 
     async def generate():
+        nonlocal upstream_status_code
+
         async with client.stream(
             method=request.method,
             url=url,
             headers=headers,
             content=body,
         ) as resp:
+            upstream_status_code = resp.status_code
             async for chunk in resp.aiter_bytes():
                 chunks.append(chunk)
                 yield chunk
 
         duration_ms = (time.monotonic() - start) * 1000
         if verbose:
-            print(f"[{trace_id[:8]}] ← stream done  {duration_ms:.0f}ms")
+            print(
+                f"[{trace_id[:8]}] ← stream done {upstream_status_code} {duration_ms:.0f}ms"
+            )
 
         if logger:
             asyncio.create_task(
@@ -298,7 +346,7 @@ async def _handle_streaming(
                     path=f"/{path}",
                     request_body=body,
                     response_body=b"".join(chunks),
-                    status_code=200,
+                    status_code=upstream_status_code,
                     duration_ms=duration_ms,
                     request_headers=dict(request.headers),
                 )

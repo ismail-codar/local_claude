@@ -12,12 +12,12 @@ Ortam değişkenleri (ya da .env dosyası):
   LANGFUSE_PUBLIC_KEY
   LANGFUSE_SECRET_KEY
   LANGFUSE_HOST          (varsayılan: https://cloud.langfuse.com)
+  LANGFUSE_CURL_LOG      (boş/kapalı, masked, full, true, 1)
   GATEWAY_TARGET_URL     (varsayılan: http://localhost:8001)
   GATEWAY_PORT           (varsayılan: 8010)
 """
 
 import argparse
-import json
 import os
 import signal
 import subprocess
@@ -72,17 +72,26 @@ def cmd_start(args):
     lf_pub = args.lf_public_key or os.getenv("LANGFUSE_PUBLIC_KEY", "")
     lf_sec = args.lf_secret_key or os.getenv("LANGFUSE_SECRET_KEY", "")
     lf_host = args.lf_host or os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    lf_curl_log = os.getenv("LANGFUSE_CURL_LOG", "")
     verbose = args.verbose
 
     # Çalışacak Python betiği
-    runner_src = _make_runner(target, port, lf_pub, lf_sec, lf_host, verbose)
+    runner_src = _make_runner(
+        target=target,
+        port=port,
+        lf_pub=lf_pub,
+        lf_sec=lf_sec,
+        lf_host=lf_host,
+        lf_curl_log=lf_curl_log,
+        verbose=verbose,
+    )
     runner_path = Path("/tmp/_gateway_runner.py")
     runner_path.write_text(runner_src)
 
     if args.foreground:
         # Ön planda çalıştır (Ctrl+C ile dur)
         print(f"▶  Gateway başlatılıyor  :{port} → {target}")
-        _print_config(port, target, lf_host, lf_pub, verbose)
+        _print_config(port, target, lf_host, lf_pub, lf_curl_log, verbose)
         os.execv(sys.executable, [sys.executable, str(runner_path)])
     else:
         # Arka planda (daemon) çalıştır
@@ -95,7 +104,7 @@ def cmd_start(args):
             )
         PID_FILE.write_text(str(proc.pid))
         print(f"▶  Gateway başlatıldı    PID={proc.pid}")
-        _print_config(port, target, lf_host, lf_pub, verbose)
+        _print_config(port, target, lf_host, lf_pub, lf_curl_log, verbose)
         print(f"   Log → {LOG_FILE}")
     return 0
 
@@ -153,15 +162,20 @@ def cmd_status(_args):
 # ──────────────────────────────────────────────
 
 
-def _print_config(port, target, lf_host, lf_pub, verbose):
+def _print_config(port, target, lf_host, lf_pub, lf_curl_log, verbose):
     lf_status = f"✓ {lf_host}" if lf_pub else "✗ devre dışı (LANGFUSE_PUBLIC_KEY yok)"
     print(f"   Proxy   :  :{port} → {target}")
     print(f"   Langfuse: {lf_status}")
+
+    if lf_pub:
+        curl_status = lf_curl_log or "kapalı"
+        print(f"   LF Curl :  {curl_status}")
+
     if verbose:
         print("   Verbose :  açık")
 
 
-def _make_runner(target, port, lf_pub, lf_sec, lf_host, verbose) -> str:
+def _make_runner(target, port, lf_pub, lf_sec, lf_host, lf_curl_log, verbose) -> str:
     """Uvicorn'u başlatan küçük bir Python betiği oluştur."""
     return textwrap.dedent(f"""\
         import sys, os
@@ -183,6 +197,7 @@ def _make_runner(target, port, lf_pub, lf_sec, lf_host, verbose) -> str:
             langfuse_public_key={lf_pub!r},
             langfuse_secret_key={lf_sec!r},
             langfuse_host={lf_host!r},
+            langfuse_curl_log={lf_curl_log!r},
             verbose={verbose!r},
         )
 
