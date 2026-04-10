@@ -23,13 +23,13 @@ LOG_FILE="$ROOT_DIR/llama-server.log"
 # MODEL_URL="https://huggingface.co/Jackrong/Qwopus3.5-27B-v3-GGUF/resolve/main/Qwopus3.5-27B-v3-Q4_K_M.gguf"
 # MODEL_FILE="$MODEL_DIR/Qwopus3.5-27B-v3-Q4_K_M.gguf"
 
-# 138 token/saniye
-# MODEL_URL="https://huggingface.co/ClankLabs/Wrench-35B-A3B-Q4_K_M-GGUF/resolve/main/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
-# MODEL_FILE="$MODEL_DIR/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
-
 # 105 token/saniye
-MODEL_URL="https://huggingface.co/Jackrong/Gemopus-4-26B-A4B-it-GGUF/resolve/main/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
-MODEL_FILE="$MODEL_DIR/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
+# MODEL_URL="https://huggingface.co/Jackrong/Gemopus-4-26B-A4B-it-GGUF/resolve/main/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
+# MODEL_FILE="$MODEL_DIR/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
+
+# 138 token/saniye
+MODEL_URL="https://huggingface.co/ClankLabs/Wrench-35B-A3B-Q4_K_M-GGUF/resolve/main/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
+MODEL_FILE="$MODEL_DIR/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
 
 
 mkdir -p "$MODEL_DIR"
