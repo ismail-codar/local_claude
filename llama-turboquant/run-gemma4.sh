@@ -3,7 +3,7 @@ set -e
 echo "=== Local LLM + TurboQuant (L40S 48GB - aria2c indir + models'ten çalıştır) ==="
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
-LLAMA_DIR="$ROOT_DIR/llama-cpp-turboquant"
+LLAMA_DIR="$ROOT_DIR/llama.cpp"
 MODEL_DIR="$ROOT_DIR/../models"
 LOG_FILE="$ROOT_DIR/llama-server.log"
  
@@ -12,8 +12,6 @@ MODEL_FILE="$MODEL_DIR/supergemma4-26b-abliterated-multimodal-Q4_K_M.gguf"
 
 MMPROJ_URL="https://huggingface.co/Jiunsong/supergemma4-26b-abliterated-multimodal-gguf-4bit/resolve/main/mmproj-supergemma4-26b-abliterated-multimodal-f16.gguf"
 MMPROJ_FILE="$MODEL_DIR/mmproj-supergemma4-26b-abliterated-multimodal-f16.gguf"
-
-TEMPLATE_FILE="$LLAMA_DIR/models/templates/gemma4.jinja"
 
 mkdir -p "$MODEL_DIR"
 cd "$LLAMA_DIR"
@@ -54,8 +52,6 @@ echo "TurboQuant KV Cache + 256K Context + Multimodal ile arka planda başlatıl
 nohup ./build/bin/llama-server \
   -m "$MODEL_FILE" \
   --mmproj "$MMPROJ_FILE" \
-  --cache-type-k turbo3 \
-  --cache-type-v turbo3 \
   -c 262144 \
   -ngl 99 \
   --flash-attn on \
@@ -64,7 +60,6 @@ nohup ./build/bin/llama-server \
   --host 0.0.0.0 \
   --port 8001 \
   --jinja \
-  --chat-template-file "$LLAMA_DIR/models/templates/gemma4.jinja" \
   -t 0 \
   --no-mmap \
   --reasoning-budget 4096 \
