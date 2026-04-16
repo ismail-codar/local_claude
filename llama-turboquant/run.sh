@@ -27,9 +27,17 @@ LOG_FILE="$ROOT_DIR/llama-server.log"
 # MODEL_URL="https://huggingface.co/Jackrong/Gemopus-4-26B-A4B-it-GGUF/resolve/main/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
 # MODEL_FILE="$MODEL_DIR/Gemopus-4-26B-A4B-it-Preview-Q8_0.gguf"
 
+# 122 token/saniye
+# MODEL_URL="https://huggingface.co/Jiunsong/supergemma4-26b-uncensored-gguf-v2/resolve/main/supergemma4-26b-uncensored-fast-v2-Q4_K_M.gguf"
+# MODEL_FILE="$MODEL_DIR/supergemma4-26b-uncensored-fast-v2-Q4_K_M.gguf"
+
 # 138 token/saniye
 MODEL_URL="https://huggingface.co/ClankLabs/Wrench-35B-A3B-Q4_K_M-GGUF/resolve/main/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
 MODEL_FILE="$MODEL_DIR/Wrench-35B-A3B-Q4_K_M-GGUF.gguf"
+
+# 122 token/saniye
+MODEL_URL="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf"
+MODEL_FILE="$MODEL_DIR/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf"
 
 
 mkdir -p "$MODEL_DIR"
@@ -75,6 +83,23 @@ echo "TurboQuant KV Cache + 256K Context ile arka planda başlatılıyor..."
 #   --reasoning-budget 0 \
 #   > "$LOG_FILE" 2>&1 &
 
+# nohup ./build/bin/llama-server \
+#   -m "$MODEL_FILE" \
+#   --cache-type-k turbo3 \
+#   --cache-type-v turbo3 \
+#   -c 262144 \
+#   -ngl 99 \
+#   --flash-attn on \
+#   --cont-batching \
+#   -np 4 \
+#   --host 0.0.0.0 \
+#   --port 8001 \
+#   --jinja \
+#   -t 0 \
+#   --no-mmap \
+#   --reasoning-budget 4096 \
+#   >/dev/null 2>&1 &
+
 nohup ./build/bin/llama-server \
   -m "$MODEL_FILE" \
   --cache-type-k turbo3 \
@@ -83,13 +108,14 @@ nohup ./build/bin/llama-server \
   -ngl 99 \
   --flash-attn on \
   --cont-batching \
-  -np 4 \
+  -np 2 \
   --host 0.0.0.0 \
   --port 8001 \
   --jinja \
   -t 0 \
-  --no-mmap \
-  --reasoning-budget 4096 \
+  --reasoning-budget 16384 \
+  --batch-size 512 \
+  --ubatch-size 512 \
   >/dev/null 2>&1 &
 
 SERVER_PID=$!
