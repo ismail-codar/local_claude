@@ -166,6 +166,7 @@ nohup ./build/bin/llama-server \
   --host "$HOST" \
   --port "$PORT" \
   --jinja \
+  --chat-template-file chat_template.jinja \
   -t "$THREADS" \
   --batch-size "$BATCH_SIZE" \
   --ubatch-size "$UBATCH_SIZE" \
