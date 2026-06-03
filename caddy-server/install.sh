@@ -1,6 +1,3 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
 if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 else
@@ -19,6 +16,9 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
 $SUDO apt update
 $SUDO apt install -y caddy
 
-$SUDO systemctl enable --now caddy
-$SUDO systemctl status caddy --no-pager
+# Sistem genelindeki caddy servisini kullanmıyoruz; config ve loglar PWD'de.
+# Port 80 çakışmasını önlemek için systemd servisini durdur/devre dışı bırak.
+$SUDO systemctl disable --now caddy 2>/dev/null || true
+
 caddy version
+echo "Kurulum tamam. Başlatmak için: ./cli.sh start"

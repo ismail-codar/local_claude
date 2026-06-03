@@ -4,3 +4,4 @@ bin
 build
 *.egg-info
 .python-version
+forti.txt

@@ -3,18 +3,28 @@
 	auto_https off
 }
 
-:80 {
+:7999 {
 	log {
-		output file /var/log/caddy/access.log
+		output file access.log
 		format json
 	}
 
-	handle_path /llama/* {
+	@llama path /llama /llama/*
+	handle @llama {
+		uri strip_prefix /llama
 		reverse_proxy localhost:8001
 	}
 
-	handle_path /searxng/* {
+	@searxng path /searxng /searxng/*
+	handle @searxng {
+		uri strip_prefix /searxng
 		reverse_proxy localhost:3333
+	}
+
+	@localai path /localai /localai/*
+	handle @localai {
+		uri strip_prefix /localai
+		reverse_proxy localhost:8000
 	}
 
 	handle {
