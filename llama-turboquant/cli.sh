@@ -19,8 +19,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --env|-e)   ENV_FILE="$2"; shift 2 ;;
     --env=*)    ENV_FILE="${1#--env=}"; shift ;;
-    start|stop|log|clearlog) CMD="$1"; shift ;;
-    *)          echo "Bilinmeyen parametre: $1"; echo "Usage: $0 {start|stop|log|clearlog} [--env /path/to/.env]"; exit 1 ;;
+    start|stop|log|clearlog|install) CMD="$1"; shift ;;
+    *)          echo "Bilinmeyen parametre: $1"; echo "Usage: $0 {start|stop|log|clearlog|install} [--env /path/to/.env]"; exit 1 ;;
   esac
 done
 
@@ -31,6 +31,11 @@ LLAMA_DIR="${LLAMA_DIR:-$ROOT_DIR/llama-cpp-turboquant}"
 MODEL_DIR="${MODEL_DIR:-$ROOT_DIR/../models}"
 LOG_FILE="${LOG_FILE:-$ROOT_DIR/llama-server.log}"
 PID_FILE="${PID_FILE:-$ROOT_DIR/llama-server.pid}"
+
+# install komutu icin TurboQuant fork kaynagi (env ile override edilebilir)
+INSTALL_REPO_URL="${INSTALL_REPO_URL:-https://github.com/TheTom/llama-cpp-turboquant.git}"
+INSTALL_BRANCH="${INSTALL_BRANCH:-feature/turboquant-kv-cache}"
+CUDA_ARCH="${CUDA_ARCH:-89}"
 
 # .env yukle (varsa). Parametre/env verilmezse SCRIPT_DIR/.env denenir.
 ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
@@ -358,10 +363,71 @@ clearlog() {
   echo "Log temizlendi: $LOG_FILE"
 }
 
+# llama-cpp-turboquant'i sifirdan kurar: varolan LLAMA_DIR'i SILER ve
+# fork'u yeniden klonlayip CUDA + HTTPS destegi ile derler (install.sh esdegeri).
+install() {
+  # Sunucu calisiyorsa once durdur (binary uzerine yazmamak icin).
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "llama-server calisiyor, once durduruluyor..."
+    stop
+  fi
+
+  echo "=== llama-cpp-turboquant kurulumu (CUDA arch $CUDA_ARCH) ==="
+  echo "Repo:   $INSTALL_REPO_URL"
+  echo "Branch: $INSTALL_BRANCH"
+  echo "Hedef:  $LLAMA_DIR"
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git bulunamadi. Once git kur."
+    exit 1
+  fi
+  if ! command -v cmake >/dev/null 2>&1; then
+    echo "cmake bulunamadi. Once cmake kur."
+    exit 1
+  fi
+  if ! command -v nvcc >/dev/null 2>&1; then
+    echo "UYARI: nvcc bulunamadi! CUDA kurulu oldugundan emin ol (derleme basarisiz olabilir)."
+  fi
+
+  # Varolan kurulumu tamamen sil.
+  if [ -e "$LLAMA_DIR" ]; then
+    echo "Varolan kurulum siliniyor: $LLAMA_DIR"
+    rm -rf "$LLAMA_DIR"
+  fi
+
+  echo "Repo klonlaniyor..."
+  git clone "$INSTALL_REPO_URL" "$LLAMA_DIR"
+
+  cd "$LLAMA_DIR"
+  git fetch --all
+  git checkout "$INSTALL_BRANCH"
+  git pull --ff-only origin "$INSTALL_BRANCH" || true
+
+  echo "Derleme basliyor..."
+  rm -rf build
+  cmake -B build \
+    -DGGML_CUDA=ON \
+    -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
+    -DLLAMA_CURL=ON \
+    -DLLAMA_OPENSSL=ON \
+    -DCMAKE_BUILD_TYPE=Release
+  cmake --build build --config Release -j"$(nproc)"
+
+  if [ ! -x ./build/bin/llama-server ]; then
+    echo "HATA: derleme bitti ama ./build/bin/llama-server bulunamadi."
+    exit 1
+  fi
+
+  echo "=== Kurulum tamamlandi! ==="
+  echo "Binary: $LLAMA_DIR/build/bin/llama-server"
+  echo "Baslatmak icin: $0 --env <env-dosyasi> start"
+}
+
 case "$CMD" in
   start)    start ;;
   stop)     stop ;;
   log)      log ;;
   clearlog) clearlog ;;
-  *)        echo "Usage: $0 {start|stop|log|clearlog} [--env /path/to/.env]"; exit 1 ;;
+  install)  install ;;
+  *)        echo "Usage: $0 {start|stop|log|clearlog|install} [--env /path/to/.env]"; exit 1 ;;
 esac
