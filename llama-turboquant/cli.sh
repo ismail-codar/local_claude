@@ -19,8 +19,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --env|-e)   ENV_FILE="$2"; shift 2 ;;
     --env=*)    ENV_FILE="${1#--env=}"; shift ;;
-    start|stop|log) CMD="$1"; shift ;;
-    *)          echo "Bilinmeyen parametre: $1"; echo "Usage: $0 {start|stop|log} [--env /path/to/.env]"; exit 1 ;;
+    start|stop|log|clearlog) CMD="$1"; shift ;;
+    *)          echo "Bilinmeyen parametre: $1"; echo "Usage: $0 {start|stop|log|clearlog} [--env /path/to/.env]"; exit 1 ;;
   esac
 done
 
@@ -91,10 +91,30 @@ SPEC_DRAFT_N_MAX="${SPEC_DRAFT_N_MAX:-6}"
 CACHE_TYPE_K="${CACHE_TYPE_K:-turbo4}"
 CACHE_TYPE_V="${CACHE_TYPE_V:-turbo4}"
 
+# Reasoning aktif mi (thinking on/off/auto):
+#   auto = chat template'den otomatik tespit (varsayilan llama.cpp davranisi)
+#   on   = thinking'i ZORLA ac -> <think> bloklari reasoning olarak ayristirilir
+#   off  = thinking kapali
+# LFM2.5 gibi template'i standart "enable_thinking" yerine "preserve_thinking"
+# kullanan modellerde auto tespiti basarisiz olur (log'da thinking = 0) ve
+# <think> etiketleri reasoning_content'e AYRISTIRILAMAZ; ham metin olarak gorunur.
+# Bu durumda REASONING=on yap. Bos birakirsan --reasoning hic gecilmez.
+REASONING="${REASONING:-}"
+
 # Reasoning butcesi (modelin destekledigi durumda):
 # 0 = reasoning kapali/daha hizli, 4096 = dengeli, 8192 = uzun, -1 = sinirsiz
 # Bos birakirsan --reasoning-budget hic gecilmez.
 REASONING_BUDGET="${REASONING_BUDGET:-4096}"
+
+# Reasoning ayristirma formati:
+# <think>...</think> bloklarinin nasil islenecegini belirler.
+#   auto     = chat template'e gore otomatik (varsayilan llama.cpp davranisi)
+#   deepseek = <think> icerigi reasoning_content'e ayrilir -> Web UI'de
+#              katlanabilir "thinking" bolumu, normal cevaptan ayri gosterilir
+#   none     = ayristirma yok, <think> etiketleri icerikte DUZ METIN kalir
+# Web UI'de ham <think> goruyorsan deepseek kullan.
+# Bos birakirsan --reasoning-format hic gecilmez (llama.cpp varsayilani).
+REASONING_FORMAT="${REASONING_FORMAT:-deepseek}"
 
 # Sampling varsayilanlari (sunucu varsayilani; istek bunlari override edebilir).
 # Bos birakilanlar llama-server'a hic gecilmez (llama.cpp varsayilani kullanilir).
@@ -213,8 +233,22 @@ start() {
   if [ -n "$SPEC_TYPE" ]; then
     set -- "$@" --spec-type "$SPEC_TYPE" --spec-draft-n-max "$SPEC_DRAFT_N_MAX"
   fi
+  if [ -n "$REASONING" ]; then
+    # --reasoning on/off/auto: thinking'i template tespitinden bagimsiz zorlar.
+    # Eski fork'larda bu bayrak olmayabilir; --help ile dogrula.
+    if ./build/bin/llama-server --help 2>&1 | grep -q -- "--reasoning "; then
+      set -- "$@" --reasoning "$REASONING"
+      echo "Reasoning (thinking): $REASONING (zorlandi)"
+    else
+      echo "UYARI: Bu build --reasoning bayragini desteklemiyor; REASONING=$REASONING atlandi."
+      echo "       <think> ayristirma icin guncel llama.cpp/fork gerekebilir."
+    fi
+  fi
   if [ -n "$REASONING_BUDGET" ]; then
     set -- "$@" --reasoning-budget "$REASONING_BUDGET"
+  fi
+  if [ -n "$REASONING_FORMAT" ]; then
+    set -- "$@" --reasoning-format "$REASONING_FORMAT"
   fi
   if [ -n "$TEMP" ]; then
     set -- "$@" --temp "$TEMP"
@@ -315,9 +349,19 @@ log() {
   tail -n 255 -f "$LOG_FILE"
 }
 
+clearlog() {
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "Log dosyasi yok: $LOG_FILE"
+    exit 0
+  fi
+  : > "$LOG_FILE"
+  echo "Log temizlendi: $LOG_FILE"
+}
+
 case "$CMD" in
-  start) start ;;
-  stop)  stop ;;
-  log)   log ;;
-  *)     echo "Usage: $0 {start|stop|log} [--env /path/to/.env]"; exit 1 ;;
+  start)    start ;;
+  stop)     stop ;;
+  log)      log ;;
+  clearlog) clearlog ;;
+  *)        echo "Usage: $0 {start|stop|log|clearlog} [--env /path/to/.env]"; exit 1 ;;
 esac
