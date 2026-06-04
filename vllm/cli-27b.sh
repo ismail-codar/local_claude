@@ -3,10 +3,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PID_FILE="$SCRIPT_DIR/vllm.pid"
-LOG_FILE="$SCRIPT_DIR/vllm.log"
+PID_FILE="$SCRIPT_DIR/vllm-27b.pid"
+LOG_FILE="$SCRIPT_DIR/vllm-27b.log"
 
-MODEL="Qwen/Qwen3.6-35B-A3B-FP8"
+MODEL="Qwen/Qwen3.6-27B-FP8"
+DRAFT_MODEL="z-lab/Qwen3.6-27B-DFlash"
 PORT="8000"
 
 start() {
@@ -21,11 +22,11 @@ start() {
   # Reduce CUDA fragmentation (frees the "reserved but unallocated" memory)
   export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   nohup vllm serve "$MODEL" \
-    --speculative-config '{"method": "dflash", "model": "z-lab/Qwen3.6-35B-A3B-DFlash", "num_speculative_tokens": 15}' \
+    --speculative-config '{"method": "dflash", "model": "'"$DRAFT_MODEL"'", "num_speculative_tokens": 15}' \
     --attention-backend flash_attn \
     --gpu-memory-utilization 0.95 \
-    --max-model-len 16384 \
-    --max-num-batched-tokens 16384 \
+    --max-model-len 8192 \
+    --max-num-batched-tokens 8192 \
     --port "$PORT" \
     > "$LOG_FILE" 2>&1 &
 
