@@ -4,7 +4,12 @@
       "Bash(python3 -c ':*)",
       "Bash(python -c ':*)",
       "Bash(curl -sL \"https://api.github.com/repos/ggerganov/llama.cpp/releases/latest\")",
-      "Bash(ln:*)"
+      "Bash(ln:*)",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_snapshot",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__click",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__fill",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__evaluate_script"
     ]
   }
 }
