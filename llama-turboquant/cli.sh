@@ -1,8 +1,8 @@
 #!/bin/sh
-# llama.cpp + TurboQuant + Qwen3.6 MTP server control: start / stop / log
+# llama.cpp / beellama.cpp server control: start / stop / log / clearlog / install
 set -e
 
-echo "=== Local LLM + TurboQuant + Qwen3.6 MTP (NVIDIA L40S 48GB) ==="
+echo "=== Local LLM + TurboQuant / DFlash / MTP server ==="
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
@@ -11,34 +11,50 @@ ROOT_DIR="$SCRIPT_DIR"
 # Kullanim:
 #   ./cli.sh start
 #   ./cli.sh start --env /path/to/.env
+#   ./cli.sh --env /path/to/.env start
 #   ./cli.sh --env=/path/to/.env start
-#   ENV_FILE=/path/.env ./cli.sh start   (env degiskeni ile de olur)
+#   ENV_FILE=/path/.env ./cli.sh start
+
 CMD=""
 ENV_FILE="${ENV_FILE:-}"
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --env|-e)   ENV_FILE="$2"; shift 2 ;;
-    --env=*)    ENV_FILE="${1#--env=}"; shift ;;
-    start|stop|log|clearlog|install) CMD="$1"; shift ;;
-    *)          echo "Bilinmeyen parametre: $1"; echo "Usage: $0 {start|stop|log|clearlog|install} [--env /path/to/.env]"; exit 1 ;;
+    --env|-e)
+      ENV_FILE="$2"
+      shift 2
+      ;;
+    --env=*)
+      ENV_FILE="${1#--env=}"
+      shift
+      ;;
+    start|stop|log|clearlog|install)
+      CMD="$1"
+      shift
+      ;;
+    *)
+      echo "Bilinmeyen parametre: $1"
+      echo "Usage: $0 {start|stop|log|clearlog|install} [--env /path/to/.env]"
+      exit 1
+      ;;
   esac
 done
 
-# Dizin varsayilanlari .env'den ONCE seed ediliyor; boylece .env icinde
-# MODEL_FILE="$MODEL_DIR/foo.gguf" gibi referanslar calisir. .env yine de
-# bu degiskenleri override edebilir (sourcing seed'in uzerine yazar).
+# Dizin varsayilanlari .env'den ONCE seed ediliyor.
+# Boylece .env icinde MODEL_FILE="$MODEL_DIR/foo.gguf" gibi referanslar calisir.
 LLAMA_DIR="${LLAMA_DIR:-$ROOT_DIR/llama-cpp-turboquant}"
 MODEL_DIR="${MODEL_DIR:-$ROOT_DIR/../models}"
 LOG_FILE="${LOG_FILE:-$ROOT_DIR/llama-server.log}"
 PID_FILE="${PID_FILE:-$ROOT_DIR/llama-server.pid}"
 
-# install komutu icin TurboQuant fork kaynagi (env ile override edilebilir)
+# install komutu icin repo ayarlari env ile override edilebilir.
 INSTALL_REPO_URL="${INSTALL_REPO_URL:-https://github.com/TheTom/llama-cpp-turboquant.git}"
 INSTALL_BRANCH="${INSTALL_BRANCH:-feature/turboquant-kv-cache}"
 CUDA_ARCH="${CUDA_ARCH:-89}"
 
-# .env yukle (varsa). Parametre/env verilmezse SCRIPT_DIR/.env denenir.
+# .env yukle.
 ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
+
 if [ -f "$ENV_FILE" ]; then
   echo "Ayarlar yukleniyor: $ENV_FILE"
   set -a
@@ -47,34 +63,17 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
+# --- Genel varsayilanlar ---
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8001}"
 
-# L40S 48GB icin onerilen:
-# - UD-Q5_K_XL: kalite/VRAM dengesi iyi, 27.2 GB
-# - 256K context + TurboQuant KV cache
-# - MTP/speculative decoding aktif
-#
-# Daha hizli / daha serin alternatif:
-#   Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
-#
-# Daha kaliteli ama VRAM daha sikisik:
-#   Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf
-
 MODEL_URL="${MODEL_URL:-https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf}"
-# Not: Unsloth, MTP'li ve MTP'siz repolarda ayni dosya adini kullaniyor.
-# Cakismayi onlemek icin yerel adi acikca "-MTP-" ile isaretliyoruz.
 MODEL_FILE="${MODEL_FILE:-$MODEL_DIR/Qwen3.6-35B-A3B-MTP-UD-Q5_K_XL.gguf}"
 
-# Multimodal (vision) destegi - opsiyonel.
-# 1 = mmproj indir ve --mmproj ile baslat (text + vision)
-# 0 = sadece text (varsayilan, en hizli)
-# Not: Qwen3.6-35B-A3B-MTP-GGUF repo'sunda mmproj birlikte yayinlaniyor.
 ENABLE_MMPROJ="${ENABLE_MMPROJ:-1}"
 MMPROJ_URL="${MMPROJ_URL:-https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/main/mmproj-F16.gguf}"
 MMPROJ_FILE="${MMPROJ_FILE:-$MODEL_DIR/mmproj-F16.gguf}"
 
-# 48GB L40S icin baslangic ayarlari
 CTX_SIZE="${CTX_SIZE:-262144}"
 PARALLEL_SLOTS="${PARALLEL_SLOTS:-1}"
 GPU_LAYERS="${GPU_LAYERS:-99}"
@@ -82,93 +81,72 @@ BATCH_SIZE="${BATCH_SIZE:-1024}"
 UBATCH_SIZE="${UBATCH_SIZE:-512}"
 THREADS="${THREADS:-0}"
 
-# MTP (speculative decoding):
-# 1 = ac (sadece MTP draft katmani olan modellerde, orn. Qwen3.6 MTP)
-# 0 = kapat (MTP'siz modeller icin, orn. LFM2.5-8B-A1B)
+# Prompt cache kontrolu.
+# Bos birakilirsa llama-server varsayilani kullanilir.
+# 0 verilirse --cache-ram 0 ile prompt cache kapatilir.
+CACHE_RAM="${CACHE_RAM:-}"
+
+# Speculative decoding secenekleri.
 ENABLE_MTP="${ENABLE_MTP:-1}"
-# Resmi llama.cpp guncel ad: draft-mtp
-# Bazi TurboQuant fork'lari eski ad olan mtp kullanir.
+ENABLE_DFLASH="${ENABLE_DFLASH:-0}"
 SPEC_DRAFT_N_MAX="${SPEC_DRAFT_N_MAX:-6}"
 
-# KV cache:
-# turbo4 daha kaliteli; 48GB L40S icin uygun.
-# Daha fazla bos VRAM / hiz denemesi icin K turbo3, V turbo4 denenebilir.
+DRAFT_MODEL_URL="${DRAFT_MODEL_URL:-}"
+DRAFT_MODEL_FILE="${DRAFT_MODEL_FILE:-}"
+SPEC_DRAFT_NGL="${SPEC_DRAFT_NGL:-99}"
+SPEC_DFLASH_CROSS_CTX="${SPEC_DFLASH_CROSS_CTX:-1024}"
+SPEC_DRAFT_DEVICE="${SPEC_DRAFT_DEVICE:-}"
+
+# KV cache.
 CACHE_TYPE_K="${CACHE_TYPE_K:-turbo4}"
 CACHE_TYPE_V="${CACHE_TYPE_V:-turbo4}"
 
-# Reasoning aktif mi (thinking on/off/auto):
-#   auto = chat template'den otomatik tespit (varsayilan llama.cpp davranisi)
-#   on   = thinking'i ZORLA ac -> <think> bloklari reasoning olarak ayristirilir
-#   off  = thinking kapali
-# LFM2.5 gibi template'i standart "enable_thinking" yerine "preserve_thinking"
-# kullanan modellerde auto tespiti basarisiz olur (log'da thinking = 0) ve
-# <think> etiketleri reasoning_content'e AYRISTIRILAMAZ; ham metin olarak gorunur.
-# Bu durumda REASONING=on yap. Bos birakirsan --reasoning hic gecilmez.
+# Reasoning.
+# Eski surumde bos REASONING_BUDGET 4096'ya donuyordu.
+# Bu surumde sadece env/dosyada deger varsa flag gecilir.
 REASONING="${REASONING:-}"
+REASONING_BUDGET="${REASONING_BUDGET:-}"
+REASONING_FORMAT="${REASONING_FORMAT:-}"
 
-# Reasoning butcesi (modelin destekledigi durumda):
-# 0 = reasoning kapali/daha hizli, 4096 = dengeli, 8192 = uzun, -1 = sinirsiz
-# Bos birakirsan --reasoning-budget hic gecilmez.
-REASONING_BUDGET="${REASONING_BUDGET:-4096}"
-
-# Reasoning ayristirma formati:
-# <think>...</think> bloklarinin nasil islenecegini belirler.
-#   auto     = chat template'e gore otomatik (varsayilan llama.cpp davranisi)
-#   deepseek = <think> icerigi reasoning_content'e ayrilir -> Web UI'de
-#              katlanabilir "thinking" bolumu, normal cevaptan ayri gosterilir
-#   none     = ayristirma yok, <think> etiketleri icerikte DUZ METIN kalir
-# Web UI'de ham <think> goruyorsan deepseek kullan.
-# Bos birakirsan --reasoning-format hic gecilmez (llama.cpp varsayilani).
-REASONING_FORMAT="${REASONING_FORMAT:-deepseek}"
-
-# Ozel chat template dosyasi (opsiyonel, build-bagimsiz <think> cozumu):
-# Bazi modellerin (orn. LFM2.5) template'i generation prompt'unda <think>
-# ACMAZ; model <think>'i kendisi uretir ve --reasoning on/auto + peg-native
-# parser bunu reasoning_content'e ayristiramaz (log: thinking = 0).
-# Cozum: generation prompt'u <think> ile baslatan bir template ver; boylece
-# llama.cpp thinking'i "forced-open" sayar ve deepseek formatinda </think>'e
-# kadar olan kismi reasoning olarak ayirir.
-# Bos birakirsan --chat-template-file hic gecilmez (modelin gomulu template'i).
+# Chat template.
 CHAT_TEMPLATE_FILE="${CHAT_TEMPLATE_FILE:-}"
 
-# Sampling varsayilanlari (sunucu varsayilani; istek bunlari override edebilir).
-# Bos birakilanlar llama-server'a hic gecilmez (llama.cpp varsayilani kullanilir).
+# Sampling.
 TEMP="${TEMP:-}"
 TOP_K="${TOP_K:-}"
 TOP_P="${TOP_P:-}"
 MIN_P="${MIN_P:-}"
 REPEAT_PENALTY="${REPEAT_PENALTY:-}"
 
-# llama-ui (SvelteKit tabanli yeni Web UI, llama.cpp varsayilan olarak acik):
-# https://github.com/ggml-org/llama.cpp/discussions/16938
-# 1 = acik (varsayilan), 0 = --no-webui ile kapat
+# Web UI / API.
 ENABLE_WEBUI="${ENABLE_WEBUI:-1}"
-
-# Disa acik (0.0.0.0) calistirildigi icin opsiyonel API anahtari.
-# Bos birakirsan --api-key gecilmez.
+ENABLE_SLOTS="${ENABLE_SLOTS:-1}"
 API_KEY="${API_KEY:-}"
 
-# UI'in slot/istek metriklerini gormesi icin /slots endpoint'i.
-# 1 = --slots ekle, 0 = ekleme.
-ENABLE_SLOTS="${ENABLE_SLOTS:-1}"
-
 download_with_aria2c() {
-    _url="$1"
-    _out="$2"
-    if ! command -v aria2c >/dev/null 2>&1; then
-        echo "aria2c bulunamadi. Kur:"
-        echo "   Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y aria2"
-        exit 1
-    fi
-    aria2c \
-        --dir="$MODEL_DIR" \
-        --out="$_out" \
-        --continue=true \
-        --max-connection-per-server=16 \
-        --split=16 \
-        --min-split-size=10M \
-        --file-allocation=none \
-        "$_url"
+  _url="$1"
+  _out="$2"
+
+  if ! command -v aria2c >/dev/null 2>&1; then
+    echo "aria2c bulunamadi. Kur:"
+    echo "   Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y aria2"
+    exit 1
+  fi
+
+  aria2c \
+    --dir="$MODEL_DIR" \
+    --out="$_out" \
+    --continue=true \
+    --max-connection-per-server=16 \
+    --split=16 \
+    --min-split-size=10M \
+    --file-allocation=none \
+    "$_url"
+}
+
+check_flag_supported() {
+  _flag="$1"
+  ./build/bin/llama-server --help 2>&1 | grep -q -- "$_flag"
 }
 
 start() {
@@ -184,6 +162,7 @@ start() {
     echo "Once kurulum yapin: $0 --env <env-dosyasi> install"
     exit 1
   fi
+
   cd "$LLAMA_DIR"
 
   echo "Model:"
@@ -209,7 +188,17 @@ start() {
   fi
 
   if [ "$ENABLE_DFLASH" = "1" ]; then
+    if [ -z "$DRAFT_MODEL_FILE" ]; then
+      echo "HATA: ENABLE_DFLASH=1 ama DRAFT_MODEL_FILE bos."
+      exit 1
+    fi
+
     if [ ! -f "$DRAFT_MODEL_FILE" ]; then
+      if [ -z "$DRAFT_MODEL_URL" ]; then
+        echo "HATA: DFlash draft modeli yok ve DRAFT_MODEL_URL bos: $DRAFT_MODEL_FILE"
+        exit 1
+      fi
+
       echo "DFlash draft modeli indiriliyor:"
       echo "   $DRAFT_MODEL_URL"
       download_with_aria2c "$DRAFT_MODEL_URL" "$(basename "$DRAFT_MODEL_FILE")"
@@ -230,105 +219,149 @@ start() {
   fi
 
   SPEC_TYPE=""
+
   if [ "$ENABLE_DFLASH" = "1" ]; then
-    if [ ! -f "$DRAFT_MODEL_FILE" ]; then
-      echo "HATA: DFlash draft modeli bulunamadi: $DRAFT_MODEL_FILE"
-      exit 1
-    fi
-    if ./build/bin/llama-server --help 2>&1 | grep -q -- "--spec-dflash-cross-ctx"; then
-      SPEC_TYPE="dflash"
-      echo "Secilen spec-type: dflash (draft=$DRAFT_MODEL_FILE)"
-      echo "DFlash + Context $CTX_SIZE ile baslatiliyor..."
-    else
+    if ! check_flag_supported "--spec-dflash-cross-ctx"; then
       echo "Bu llama-server build'i DFlash spec decoding desteklemiyor gibi gorunuyor."
-      echo "DFlash destekli fork/build kullandigindan emin ol (beellama.cpp)."
+      echo "DFlash destekli fork/build kullandigindan emin ol: beellama.cpp."
       echo "DFlash'siz model kullaniyorsan .env icinde ENABLE_DFLASH=0 yap."
       exit 1
     fi
+
+    SPEC_TYPE="dflash"
+    echo "Secilen spec-type: dflash"
+    echo "DFlash + Context $CTX_SIZE ile baslatiliyor..."
   elif [ "$ENABLE_MTP" = "1" ]; then
-    # llama.cpp 13 Mayis 2026 civari --spec-type mtp adini draft-mtp olarak degistirdi.
-    # Fork eski adla derlenmis olabilir; otomatik sec.
     if ./build/bin/llama-server --help 2>&1 | grep -q "draft-mtp"; then
       SPEC_TYPE="draft-mtp"
     elif ./build/bin/llama-server --help 2>&1 | grep -q "mtp"; then
       SPEC_TYPE="mtp"
     else
       echo "Bu llama-server build'i MTP spec decoding desteklemiyor gibi gorunuyor."
-      echo "MTP + TurboQuant destekli fork/build kullandigindan emin ol."
       echo "MTP'siz model kullaniyorsan .env icinde ENABLE_MTP=0 yap."
       exit 1
     fi
+
     echo "Secilen spec-type: $SPEC_TYPE"
-    echo "TurboQuant KV Cache + Context $CTX_SIZE + MTP ile baslatiliyor..."
+    echo "Context $CTX_SIZE + MTP ile baslatiliyor..."
   else
-    echo "MTP kapali (ENABLE_MTP=0)."
-    echo "TurboQuant KV Cache + Context $CTX_SIZE ile baslatiliyor..."
+    echo "Spec decoding kapali."
+    echo "Context $CTX_SIZE ile baslatiliyor..."
   fi
 
   : > "$LOG_FILE"
 
-  # Opsiyonel bayraklar (dizi yerine konumsal parametrelerle, POSIX sh uyumlu)
+  # Opsiyonel bayraklar.
+  # POSIX sh uyumu icin dizi yerine set -- kullaniyoruz.
   set --
+
   if [ "$ENABLE_WEBUI" = "0" ]; then
     set -- "$@" --no-webui
   fi
+
   if [ "$ENABLE_SLOTS" = "1" ]; then
     set -- "$@" --slots
   fi
+
   if [ -n "$API_KEY" ]; then
     set -- "$@" --api-key "$API_KEY"
   fi
+
   if [ "$ENABLE_MMPROJ" = "1" ]; then
     set -- "$@" --mmproj "$MMPROJ_FILE"
   fi
-  if [ "$SPEC_TYPE" = "dflash" ]; then
-    set -- "$@" --spec-type dflash \
-      --spec-draft-model "$DRAFT_MODEL_FILE" \
-      --spec-draft-ngl "${SPEC_DRAFT_NGL:-99}" \
-      --spec-dflash-cross-ctx "${SPEC_DFLASH_CROSS_CTX:-1024}"
-  elif [ -n "$SPEC_TYPE" ]; then
-    set -- "$@" --spec-type "$SPEC_TYPE" --spec-draft-n-max "$SPEC_DRAFT_N_MAX"
-  fi
-  if [ -n "$REASONING" ]; then
-    # --reasoning on/off/auto: thinking'i template tespitinden bagimsiz zorlar.
-    # Eski fork'larda bu bayrak olmayabilir; --help ile dogrula.
-    if ./build/bin/llama-server --help 2>&1 | grep -q -- "--reasoning "; then
-      set -- "$@" --reasoning "$REASONING"
-      echo "Reasoning (thinking): $REASONING (zorlandi)"
+
+  if [ -n "$CACHE_RAM" ]; then
+    if check_flag_supported "--cache-ram"; then
+      set -- "$@" --cache-ram "$CACHE_RAM"
+      echo "Prompt cache RAM: $CACHE_RAM"
     else
-      echo "UYARI: Bu build --reasoning bayragini desteklemiyor; REASONING=$REASONING atlandi."
-      echo "       <think> ayristirma icin guncel llama.cpp/fork gerekebilir."
+      echo "UYARI: Bu build --cache-ram desteklemiyor; CACHE_RAM=$CACHE_RAM atlandi."
     fi
   fi
+
+  if [ "$SPEC_TYPE" = "dflash" ]; then
+    set -- "$@" \
+      --spec-type dflash \
+      --spec-draft-model "$DRAFT_MODEL_FILE" \
+      --spec-draft-ngl "$SPEC_DRAFT_NGL" \
+      --spec-dflash-cross-ctx "$SPEC_DFLASH_CROSS_CTX"
+
+    if [ -n "$SPEC_DRAFT_DEVICE" ]; then
+      if check_flag_supported "--spec-draft-device"; then
+        set -- "$@" --spec-draft-device "$SPEC_DRAFT_DEVICE"
+      else
+        echo "UYARI: Bu build --spec-draft-device desteklemiyor; SPEC_DRAFT_DEVICE=$SPEC_DRAFT_DEVICE atlandi."
+      fi
+    fi
+  elif [ -n "$SPEC_TYPE" ]; then
+    set -- "$@" \
+      --spec-type "$SPEC_TYPE" \
+      --spec-draft-n-max "$SPEC_DRAFT_N_MAX"
+  fi
+
+  if [ -n "$REASONING" ]; then
+    if check_flag_supported "--reasoning "; then
+      set -- "$@" --reasoning "$REASONING"
+      echo "Reasoning: $REASONING"
+    else
+      echo "UYARI: Bu build --reasoning bayragini desteklemiyor; REASONING=$REASONING atlandi."
+    fi
+  fi
+
   if [ -n "$REASONING_BUDGET" ]; then
-    set -- "$@" --reasoning-budget "$REASONING_BUDGET"
+    if check_flag_supported "--reasoning-budget"; then
+      set -- "$@" --reasoning-budget "$REASONING_BUDGET"
+      echo "Reasoning budget: $REASONING_BUDGET"
+    else
+      echo "UYARI: Bu build --reasoning-budget desteklemiyor; REASONING_BUDGET=$REASONING_BUDGET atlandi."
+    fi
   fi
+
   if [ -n "$REASONING_FORMAT" ]; then
-    set -- "$@" --reasoning-format "$REASONING_FORMAT"
+    if check_flag_supported "--reasoning-format"; then
+      set -- "$@" --reasoning-format "$REASONING_FORMAT"
+      echo "Reasoning format: $REASONING_FORMAT"
+    else
+      echo "UYARI: Bu build --reasoning-format desteklemiyor; REASONING_FORMAT=$REASONING_FORMAT atlandi."
+    fi
   fi
+
   if [ -n "$CHAT_TEMPLATE_FILE" ]; then
     if [ ! -f "$CHAT_TEMPLATE_FILE" ]; then
       echo "Chat template dosyasi bulunamadi: $CHAT_TEMPLATE_FILE"
       exit 1
     fi
+
     set -- "$@" --chat-template-file "$CHAT_TEMPLATE_FILE"
     echo "Ozel chat template: $CHAT_TEMPLATE_FILE"
   fi
+
   if [ -n "$TEMP" ]; then
     set -- "$@" --temp "$TEMP"
   fi
+
   if [ -n "$TOP_K" ]; then
     set -- "$@" --top-k "$TOP_K"
   fi
+
   if [ -n "$TOP_P" ]; then
     set -- "$@" --top-p "$TOP_P"
   fi
+
   if [ -n "$MIN_P" ]; then
     set -- "$@" --min-p "$MIN_P"
   fi
+
   if [ -n "$REPEAT_PENALTY" ]; then
     set -- "$@" --repeat-penalty "$REPEAT_PENALTY"
   fi
+
+  echo ""
+  echo "llama-server baslatiliyor..."
+  echo "Binary: ./build/bin/llama-server"
+  echo "Log: $LOG_FILE"
+  echo ""
 
   nohup ./build/bin/llama-server \
     -m "$MODEL_FILE" \
@@ -358,26 +391,47 @@ start() {
   echo "Model dosyasi: $MODEL_FILE"
   echo "Context: $CTX_SIZE"
   echo "Parallel slots: $PARALLEL_SLOTS"
+  echo "Batch: $BATCH_SIZE"
+  echo "UBatch: $UBATCH_SIZE"
+  echo "KV cache: K=$CACHE_TYPE_K, V=$CACHE_TYPE_V"
+
+  if [ -n "$CACHE_RAM" ]; then
+    echo "Prompt cache RAM: $CACHE_RAM"
+  else
+    echo "Prompt cache RAM: llama-server varsayilani"
+  fi
+
   if [ "$SPEC_TYPE" = "dflash" ]; then
-    echo "Spec decoding: DFlash (draft=$DRAFT_MODEL_FILE, cross-ctx=${SPEC_DFLASH_CROSS_CTX:-1024})"
+    echo "Spec decoding: DFlash"
+    echo "Draft model: $DRAFT_MODEL_FILE"
+    echo "Draft NGL: $SPEC_DRAFT_NGL"
+    echo "DFlash cross-ctx: $SPEC_DFLASH_CROSS_CTX"
+    if [ -n "$SPEC_DRAFT_DEVICE" ]; then
+      echo "Draft device: $SPEC_DRAFT_DEVICE"
+    fi
   elif [ -n "$SPEC_TYPE" ]; then
-    echo "MTP: $SPEC_TYPE, draft-n-max=$SPEC_DRAFT_N_MAX"
+    echo "Spec decoding: $SPEC_TYPE"
+    echo "Draft n-max: $SPEC_DRAFT_N_MAX"
   else
     echo "Spec decoding: kapali"
   fi
-  echo "KV cache: K=$CACHE_TYPE_K, V=$CACHE_TYPE_V"
+
   if [ "$ENABLE_MMPROJ" = "1" ]; then
     echo "Multimodal: aktif (mmproj=$MMPROJ_FILE)"
   else
-    echo "Multimodal: kapali (ENABLE_MMPROJ=1 ile ac)"
+    echo "Multimodal: kapali"
   fi
+
   if [ "$ENABLE_WEBUI" = "0" ]; then
-    echo "Web UI (llama-ui): KAPALI (--no-webui)"
+    echo "Web UI: kapali"
   else
-    echo "Web UI (llama-ui): http://$(hostname -I | awk '{print $1}'):$PORT"
+    echo "Web UI: http://$(hostname -I | awk '{print $1}'):$PORT"
   fi
+
   if [ -n "$API_KEY" ]; then
-    echo "API key korumasi: aktif (Authorization: Bearer <API_KEY>)"
+    echo "API key korumasi: aktif"
+  else
+    echo "API key korumasi: kapali"
   fi
 }
 
@@ -388,22 +442,26 @@ stop() {
   fi
 
   PID="$(cat "$PID_FILE")"
+
   if kill -0 "$PID" 2>/dev/null; then
     echo "llama-server durduruluyor (PID $PID)..."
     kill "$PID"
-    # graceful shutdown icin 30s'ye kadar bekle, sonra zorla
+
     for _ in $(seq 1 30); do
       kill -0 "$PID" 2>/dev/null || break
       sleep 1
     done
+
     if kill -0 "$PID" 2>/dev/null; then
       echo "Zorla durduruluyor..."
       kill -9 "$PID" 2>/dev/null || true
     fi
+
     echo "Durduruldu"
   else
     echo "Surec $PID canli degil; temizleniyor"
   fi
+
   rm -f "$PID_FILE"
 }
 
@@ -412,6 +470,7 @@ log() {
     echo "Log dosyasi yok: $LOG_FILE"
     exit 1
   fi
+
   tail -n 255 -f "$LOG_FILE"
 }
 
@@ -420,20 +479,18 @@ clearlog() {
     echo "Log dosyasi yok: $LOG_FILE"
     exit 0
   fi
+
   : > "$LOG_FILE"
   echo "Log temizlendi: $LOG_FILE"
 }
 
-# llama-cpp-turboquant'i sifirdan kurar: varolan LLAMA_DIR'i SILER ve
-# fork'u yeniden klonlayip CUDA + HTTPS destegi ile derler (install.sh esdegeri).
 install() {
-  # Sunucu calisiyorsa once durdur (binary uzerine yazmamak icin).
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     echo "llama-server calisiyor, once durduruluyor..."
     stop
   fi
 
-  echo "=== llama-cpp-turboquant kurulumu (CUDA arch $CUDA_ARCH) ==="
+  echo "=== llama.cpp / beellama.cpp kurulumu (CUDA arch $CUDA_ARCH) ==="
   echo "Repo:   $INSTALL_REPO_URL"
   echo "Branch: $INSTALL_BRANCH"
   echo "Hedef:  $LLAMA_DIR"
@@ -442,15 +499,16 @@ install() {
     echo "git bulunamadi. Once git kur."
     exit 1
   fi
+
   if ! command -v cmake >/dev/null 2>&1; then
     echo "cmake bulunamadi. Once cmake kur."
     exit 1
   fi
+
   if ! command -v nvcc >/dev/null 2>&1; then
-    echo "UYARI: nvcc bulunamadi! CUDA kurulu oldugundan emin ol (derleme basarisiz olabilir)."
+    echo "UYARI: nvcc bulunamadi. CUDA kurulu degilse derleme basarisiz olabilir."
   fi
 
-  # Varolan kurulumu tamamen sil.
   if [ -e "$LLAMA_DIR" ]; then
     echo "Varolan kurulum siliniyor: $LLAMA_DIR"
     rm -rf "$LLAMA_DIR"
@@ -466,12 +524,14 @@ install() {
 
   echo "Derleme basliyor..."
   rm -rf build
+
   cmake -B build \
     -DGGML_CUDA=ON \
     -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
     -DLLAMA_CURL=ON \
     -DLLAMA_OPENSSL=ON \
     -DCMAKE_BUILD_TYPE=Release
+
   cmake --build build --config Release -j"$(nproc)"
 
   if [ ! -x ./build/bin/llama-server ]; then
@@ -479,16 +539,29 @@ install() {
     exit 1
   fi
 
-  echo "=== Kurulum tamamlandi! ==="
+  echo "=== Kurulum tamamlandi ==="
   echo "Binary: $LLAMA_DIR/build/bin/llama-server"
   echo "Baslatmak icin: $0 --env <env-dosyasi> start"
 }
 
 case "$CMD" in
-  start)    start ;;
-  stop)     stop ;;
-  log)      log ;;
-  clearlog) clearlog ;;
-  install)  install ;;
-  *)        echo "Usage: $0 {start|stop|log|clearlog|install} [--env /path/to/.env]"; exit 1 ;;
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  log)
+    log
+    ;;
+  clearlog)
+    clearlog
+    ;;
+  install)
+    install
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|log|clearlog|install} [--env /path/to/.env]"
+    exit 1
+    ;;
 esac
