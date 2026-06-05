@@ -11,8 +11,8 @@ ROOT_DIR="$SCRIPT_DIR"
 # Kullanim:
 #   ./cli.sh start
 #   ./cli.sh start --env /path/to/.env
-#   ./cli.sh --env /path/to/.env start
-#   ./cli.sh --env=/path/to/.env start
+#   sh ./cli.sh --env /path/to/.env start
+#   sh ./cli.sh --env=/path/to/.env start
 #   ENV_FILE=/path/.env ./cli.sh start
 
 CMD=""
