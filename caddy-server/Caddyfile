@@ -35,3 +35,11 @@
 		respond "caddy ok" 200
 	}
 }
+
+# TripoSplat (gradio) — kendi frontend'i mutlak yollar kullandığından
+# (window.location.origin, /api/*, /viewer) subpath altında çalışmaz;
+# bu yüzden kök yolda kendi portunda yayınlanır.
+# Uygulama localhost:7860'a bind eder (bkz. triposplat/cli.sh).
+:7998 {
+	reverse_proxy localhost:7860
+}

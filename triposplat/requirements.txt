@@ -1,0 +1,7 @@
+gradio
+torch
+torchvision
+numpy
+safetensors
+pillow
+tqdm

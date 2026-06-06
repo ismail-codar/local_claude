@@ -1,0 +1,5 @@
+static/example_inputs/
+gradio_outputs/
+ckpts/
+__pycache__/
+*.pyc
