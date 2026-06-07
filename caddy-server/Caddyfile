@@ -15,6 +15,15 @@
 		reverse_proxy localhost:8001
 	}
 
+	# EmbeddingGemma-300M (embedding-only llama-server, bkz.
+	# llama-turboquant/embeddinggemma-300m.env -> PORT=8009).
+	# Orn: POST /embed/v1/embeddings -> upstream /v1/embeddings
+	@embed path /embed /embed/*
+	handle @embed {
+		uri strip_prefix /embed
+		reverse_proxy localhost:8009
+	}
+
 	@searxng path /searxng /searxng/*
 	handle @searxng {
 		uri strip_prefix /searxng
@@ -39,7 +48,7 @@
 # TripoSplat (gradio) — kendi frontend'i mutlak yollar kullandığından
 # (window.location.origin, /api/*, /viewer) subpath altında çalışmaz;
 # bu yüzden kök yolda kendi portunda yayınlanır.
-# Uygulama localhost:7860'a bind eder (bkz. triposplat/cli.sh).
+# Uygulama localhost:8010'a bind eder (bkz. triposplat/cli.sh).
 :7998 {
-	reverse_proxy localhost:7860
+	reverse_proxy localhost:8010
 }

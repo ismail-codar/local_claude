@@ -123,6 +123,11 @@ ENABLE_WEBUI="${ENABLE_WEBUI:-1}"
 ENABLE_SLOTS="${ENABLE_SLOTS:-1}"
 API_KEY="${API_KEY:-}"
 
+# Embedding modu (embeddinggemma vb.). Acikken /v1/embeddings + /embedding uclari acilir.
+ENABLE_EMBEDDING="${ENABLE_EMBEDDING:-0}"
+POOLING_TYPE="${POOLING_TYPE:-}"
+EMBD_NORMALIZE="${EMBD_NORMALIZE:-}"
+
 download_with_aria2c() {
   _url="$1"
   _out="$2"
@@ -269,6 +274,17 @@ start() {
 
   if [ "$ENABLE_MMPROJ" = "1" ]; then
     set -- "$@" --mmproj "$MMPROJ_FILE"
+  fi
+
+  if [ "$ENABLE_EMBEDDING" = "1" ]; then
+    set -- "$@" --embeddings
+    if [ -n "$POOLING_TYPE" ]; then
+      set -- "$@" --pooling "$POOLING_TYPE"
+    fi
+    if [ -n "$EMBD_NORMALIZE" ]; then
+      set -- "$@" --embd-normalize "$EMBD_NORMALIZE"
+    fi
+    echo "Embedding modu: aktif (pooling=${POOLING_TYPE:-varsayilan}, normalize=${EMBD_NORMALIZE:-varsayilan})"
   fi
 
   if [ -n "$CACHE_RAM" ]; then

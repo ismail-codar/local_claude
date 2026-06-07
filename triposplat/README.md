@@ -52,7 +52,7 @@ uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu
 ./cli.sh stop
 ```
 
-Uygulama `127.0.0.1:7860`'a bind eder. Dışarıdan erişim Caddy üzerinden:
+Uygulama `127.0.0.1:8010`'a bind eder. Dışarıdan erişim Caddy üzerinden:
 `caddy-server/cli.sh refresh` çalıştırıldıktan sonra **http://localhost:7998/**
 
 > Not: Activate etmeden `uv run python app.py` ile de çalıştırılabilir; ancak
