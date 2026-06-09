@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bonsai-Image Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-border: #1f2630;
+  --text: #d7dde6;
+  --muted: #7d8694;
+  --accent: #4cb583;
+  --warn: #d97757;
+  --grid: #21272f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 24px;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+}
+header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 20px; }
+h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.subtitle { color: var(--muted); font-size: 12px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 16px; }
+.card { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; padding: 16px; }
+.card h2 { margin: 0 0 12px 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.metric { font-size: 28px; font-weight: 600; line-height: 1; }
+.metric-sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.row { display: grid; gap: 16px; grid-template-columns: 2fr 1fr; margin-bottom: 16px; }
+.row.single { grid-template-columns: 1fr; }
+.row.equal { grid-template-columns: 1fr 1fr; }
+.row.three { grid-template-columns: 1fr 1fr 1fr; }
+@media (max-width: 1100px) { .row.three { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 900px) { .row, .row.equal, .row.three { grid-template-columns: 1fr; } }
+/* Replica pills: one chip per active uvicorn worker, color-coded by GPU
+   tier so a glance at the Replicas tile shows mixed vs homogeneous fleets. */
+.replicas { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.replica-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--grid); }
+.replica-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.status-warn { color: var(--warn); }
+canvas { max-width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--grid); }
+th { color: var(--muted); font-weight: 500; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.status-ok { color: var(--accent); }
+.status-err { color: var(--warn); }
+footer { color: var(--muted); font-size: 11px; margin-top: 20px; text-align: right; }
+.gpu-bar { background: var(--grid); border-radius: 4px; height: 6px; overflow: hidden; margin-top: 4px; }
+.gpu-bar-fill { background: var(--accent); height: 100%; transition: width 0.3s; }
+.banner { display: none; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; line-height: 1.5; border: 1px solid; }
+.banner.warn { background: rgba(217, 119, 87, 0.08); border-color: rgba(217, 119, 87, 0.4); color: #e8a280; }
+.banner.error { background: rgba(217, 119, 87, 0.15); border-color: rgba(217, 119, 87, 0.5); color: #f0a890; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🌿 Bonsai-Image Dashboard</h1>
+    <div class="subtitle" id="updated">loading...</div>
+  </div>
+  <div class="subtitle" id="refresh-label">auto-refresh every 2s</div>
+</header>
+
+<div id="storage-banner" class="banner warn"></div>
+<div id="stale-banner" class="banner warn"></div>
+<div id="error-banner" class="banner error"></div>
+
+<div class="grid">
+  <div class="card"><h2>Total images</h2><div class="metric" id="total-requests">—</div><div class="metric-sub" id="total-sub">— ok / — errors</div></div>
+  <div class="card"><h2>Today (UTC)</h2><div class="metric" id="req-today">—</div><div class="metric-sub" id="users-today">— unique users</div></div>
+  <div class="card"><h2>Last 7 days</h2><div class="metric" id="req-7d">—</div><div class="metric-sub" id="users-7d">— unique users</div></div>
+  <div class="card"><h2>Last 30 days</h2><div class="metric" id="req-30d">—</div><div class="metric-sub" id="users-30d">— unique users</div></div>
+  <div class="card"><h2>Pending</h2><div class="metric" id="pending">—</div><div class="metric-sub" id="pending-sub">— running / — capacity</div></div>
+  <div class="card">
+    <h2>Replicas</h2>
+    <div class="metric" id="replicas-metric">—</div>
+    <div class="metric-sub" id="replicas-sub">—</div>
+    <div class="replicas" id="replicas-pills"></div>
+  </div>
+  <div class="card">
+    <h2>By Variant</h2>
+    <div class="metric" id="variant-metric">—</div>
+    <div class="metric-sub" id="variant-sub">all-time · — today</div>
+  </div>
+  <div class="card"><h2>Uptime</h2><div class="metric" id="uptime">—</div><div class="metric-sub">since last restart</div></div>
+</div>
+
+<!-- Row: both charts side-by-side. Daily covers 30d, hourly covers today. -->
+<div class="row equal">
+  <div class="card">
+    <h2>Requests per day (last 30d)</h2>
+    <canvas id="daily-chart" height="80"></canvas>
+  </div>
+  <div class="card">
+    <h2>Today's requests by hour (UTC)</h2>
+    <canvas id="hourly-chart" height="80"></canvas>
+  </div>
+</div>
+
+<!-- Row: image-time stats. Three views of latency: rolling 50, all-time
+     per-resolution, today per-resolution. Same column shape so eye can
+     scan left→right and spot drift. -->
+<div class="row three">
+  <div class="card">
+    <h2>Average latency (last 50 requests)</h2>
+    <div style="display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px;">
+      <div class="metric" id="avg-latency">—</div>
+      <div class="metric-sub" id="avg-latency-sub">across last — requests</div>
+    </div>
+    <table>
+      <thead><tr><th>Resolution</th><th class="num">Count</th><th class="num">Avg latency</th><th class="num">Avg queue</th></tr></thead>
+      <tbody id="latency-tbody"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>By resolution (all-time)</h2>
+    <table>
+      <thead><tr><th>Resolution</th><th class="num">Count</th><th class="num">Avg time</th></tr></thead>
+      <tbody id="shape-tbody"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>By resolution (today)</h2>
+    <table>
+      <thead><tr><th>Resolution</th><th class="num">Count</th><th class="num">Avg time</th><th class="num">Avg queue</th></tr></thead>
+      <tbody id="shape-today-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Row: GPU stats. Live nvidia-smi snapshot, today's per-GPU breakdown,
+     all-time per-GPU breakdown. Lets you spot tier mix today vs total. -->
+<div class="row three">
+  <div class="card">
+    <h2>GPUs (live)</h2>
+    <div id="gpus"></div>
+  </div>
+  <div class="card">
+    <h2>By GPU (today)</h2>
+    <table>
+      <thead><tr><th>GPU</th><th class="num">Count</th><th class="num">Avg latency</th><th class="num">Avg queue</th></tr></thead>
+      <tbody id="gpu-today-tbody"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>By GPU (all-time)</h2>
+    <table>
+      <thead><tr><th>GPU</th><th class="num">Reps</th><th class="num">Count</th><th class="num">Errors</th><th class="num">Avg latency</th></tr></thead>
+      <tbody id="gpu-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row single">
+  <div class="card">
+    <h2>Recent requests (last 50)</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Shape</th><th>GPU</th><th class="num">Queued</th><th class="num">Duration</th><th>User</th><th>Status</th></tr></thead>
+      <tbody id="recent-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<footer id="footer">—</footer>
+
+<script>
+// Absolute paths — the dashboard URL has no trailing slash, so relative
+// `analytics.json` would resolve to `/analytics.json` (wrong) rather than
+// `/dash-…/analytics.json`. nginx has explicit location blocks for these.
+const ANALYTICS_URL = "/dash-10a08e9c1ee4/analytics.json";
+const GPU_URL = "/dash-10a08e9c1ee4/gpu-stats.json";
+
+function fmtDuration(s) {
+  if (!s) return "—";
+  const days = Math.floor(s / 86400);
+  const hours = Math.floor((s % 86400) / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+function fmtTime(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString();
+}
+function fmtRelative(ts) {
+  const dt = Date.now() / 1000 - ts;
+  if (dt < 60) return `${Math.floor(dt)}s ago`;
+  if (dt < 3600) return `${Math.floor(dt / 60)}m ago`;
+  if (dt < 86400) return `${Math.floor(dt / 3600)}h ago`;
+  return `${Math.floor(dt / 86400)}d ago`;
+}
+
+let hourlyChart, dailyChart;
+function initCharts() {
+  Chart.defaults.color = "#7d8694";
+  Chart.defaults.borderColor = "#21272f";
+  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif";
+  hourlyChart = new Chart(document.getElementById("hourly-chart"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label: "requests",
+        data: [],
+        borderColor: "#4cb583",
+        backgroundColor: "rgba(76, 181, 131, 0.12)",
+        fill: true,
+        tension: 0.25,
+        pointRadius: 3,
+        pointBackgroundColor: "#4cb583",
+        pointHoverRadius: 6,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+  // Daily chart: single-series line, same style as the hourly chart. We
+  // KEEP the per-GPU breakdown data in requests_by_day[].by_gpu — it's just
+  // not rendered on the chart. Per-GPU averages are surfaced in the By GPU
+  // (today/all-time) tables; this chart sticks to volume-over-time.
+  dailyChart = new Chart(document.getElementById("daily-chart"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label: "requests",
+        data: [],
+        borderColor: "#4cb583",
+        backgroundColor: "rgba(76, 181, 131, 0.12)",
+        fill: true,
+        tension: 0.25,
+        pointRadius: 3,
+        pointBackgroundColor: "#4cb583",
+        pointHoverRadius: 6,
+        spanGaps: true,
+      }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+}
+
+function renderStorageBanner(a) {
+  const banner = document.getElementById("storage-banner");
+  if (!a) { banner.style.display = "none"; return; }
+  if (a.persistent_storage === false) {
+    banner.style.display = "block";
+    banner.textContent = "⚠ Persistent storage bucket not mounted at /data — counters, model weights, and kernel caches reset on every Space restart. Enable a Storage Bucket in Space Settings → Storage.";
+  } else {
+    banner.style.display = "none";
+  }
+}
+
+function renderErrorBanner(msg) {
+  const banner = document.getElementById("error-banner");
+  if (!msg) { banner.style.display = "none"; return; }
+  banner.style.display = "block";
+  banner.textContent = msg;
+}
+
+function renderStaleBanner(a) {
+  // analytics.json gets rewritten every metrics_pusher tick (~2s). If the
+  // age creeps past ~10s the pusher is either struggling to reach the
+  // backends (load, restart, /metrics timeouts) or the pusher itself is
+  // wedged. Either way, surface it so the user doesn't mistake stale
+  // numbers for a real lull or zero-out.
+  const banner = document.getElementById("stale-banner");
+  if (!a || !a.updated_at) { banner.style.display = "none"; return; }
+  const ageSec = Math.floor(Date.now() / 1000 - a.updated_at);
+  if (ageSec > 10) {
+    banner.style.display = "block";
+    banner.textContent = `⚠ Metrics are ${ageSec}s stale — the backend likely couldn't answer the last few /metrics polls (often because it's busy with /generate). Numbers shown are the last good scrape.`;
+  } else {
+    banner.style.display = "none";
+  }
+}
+
+async function refresh() {
+  try {
+    const [aResp, gResp] = await Promise.all([fetch(ANALYTICS_URL, { cache: "no-store" }), fetch(GPU_URL, { cache: "no-store" })]);
+    if (!aResp.ok || !gResp.ok) throw new Error(`http ${aResp.status}/${gResp.status}`);
+    const a = await aResp.json();
+    const g = await gResp.json();
+    renderStorageBanner(a);
+    renderErrorBanner(null);
+    renderStaleBanner(a);
+    renderSummary(a);
+    renderReplicas(a);
+    renderVariant(a);
+    renderHourly(a);
+    renderShapeList(a);
+    renderShapeToday(a);
+    renderGpuToday(a);
+    renderDaily(a);
+    renderRecent(a);
+    renderGPUs(g);
+    renderLatency(a);
+    renderByGPU(a);
+    document.getElementById("updated").textContent = `updated ${fmtRelative(a.updated_at)}`;
+  } catch (e) {
+    renderErrorBanner(`Could not load metrics: ${e.message}. Sidecar may be down, or the bucket isn't ready yet.`);
+    document.getElementById("updated").textContent = `error: ${e.message}`;
+  }
+}
+
+function fmtMs(ms) {
+  if (ms == null || isNaN(ms)) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function renderSummary(a) {
+  const t = a.summary_total || { requests: 0, success: 0, errors: 0 };
+  document.getElementById("total-requests").textContent = t.requests.toLocaleString();
+  document.getElementById("total-sub").innerHTML = `<span class="status-ok">${t.success.toLocaleString()} ok</span> · <span class="status-err">${t.errors.toLocaleString()} errors</span>`;
+  const today = a.summary_today || { requests: 0, unique_users: 0 };
+  document.getElementById("req-today").textContent = today.requests.toLocaleString();
+  document.getElementById("users-today").textContent = `${today.unique_users.toLocaleString()} unique users`;
+  const d7 = a.summary_7d || { requests: 0, unique_users: 0 };
+  document.getElementById("req-7d").textContent = d7.requests.toLocaleString();
+  document.getElementById("users-7d").textContent = `${d7.unique_users.toLocaleString()} unique users`;
+  const d30 = a.summary_30d || { requests: 0, unique_users: 0 };
+  document.getElementById("req-30d").textContent = d30.requests.toLocaleString();
+  document.getElementById("users-30d").textContent = `${d30.unique_users.toLocaleString()} unique users`;
+  const queue = a.queue_depth ?? 0;
+  const running = a.running ?? 0;
+  const cap = a.capacity ?? 0;
+  const todayQueueAvg = a.today_avg_queue_ms ?? 0;
+  document.getElementById("pending").textContent = queue.toLocaleString();
+  // Pending subtitle: live cap utilization + today's avg queue. The avg is
+  // computed in metrics_pusher from today_bucket.queue_ms_total / requests,
+  // so it includes successful + errored requests but not currently-queued
+  // ones (those haven't tripped queue_ms yet).
+  const queueAvgPart = today.requests ? ` · today queue avg ${fmtMs(todayQueueAvg)}` : "";
+  document.getElementById("pending-sub").textContent = `${running} running / ${cap} GPU slot${cap === 1 ? "" : "s"}${queueAvgPart}`;
+  document.getElementById("uptime").textContent = fmtDuration(a.uptime_s);
+}
+
+// Variant breakdown tile — shows the ternary vs binary mix at a glance.
+// Big number: "T:1234 · B:567" (all-time). Subtitle: today's split. Variants
+// keyed by name ("ternary" / "binary" / "unknown") from the request's
+// `backend` field; metrics_pusher exposes them under by_variant + by_variant_today.
+function renderVariant(a) {
+  const fmtMix = (data) => {
+    const t = data?.ternary?.count || 0;
+    const b = data?.binary?.count || 0;
+    const u = data?.unknown?.count || 0;
+    const parts = [`T:${t.toLocaleString()}`, `B:${b.toLocaleString()}`];
+    if (u) parts.push(`?:${u.toLocaleString()}`);
+    return parts.join(" · ");
+  };
+  document.getElementById("variant-metric").textContent = fmtMix(a.by_variant);
+  const todayMix = fmtMix(a.by_variant_today);
+  const todayTotal = Object.values(a.by_variant_today || {}).reduce((s, b) => s + (b.count || 0), 0);
+  document.getElementById("variant-sub").textContent = todayTotal
+    ? `all-time · today: ${todayMix}`
+    : `all-time · no requests yet today`;
+}
+
+// Multi-GPU health card. Shows replicas_seen/expected up top and a row of
+// pills below — one per active replica, dot color reflects healthy or
+// errored. If the seen count is below expected, "X/Y (1 down)" + warn tint.
+function renderReplicas(a) {
+  const seen = a.replicas_seen ?? 0;
+  const expected = a.replicas_expected ?? seen;
+  const per = a.per_replica || [];
+  const metricEl = document.getElementById("replicas-metric");
+  metricEl.textContent = expected ? `${seen} / ${expected}` : String(seen);
+  metricEl.className = "metric" + (seen < expected ? " status-warn" : "");
+  const down = Math.max(0, expected - seen);
+  const subParts = [];
+  if (per.length) {
+    // Summarize tier mix: count GPUs by name. "L40S × 2" or "L40S + A10G".
+    const tierCounts = new Map();
+    for (const r of per) tierCounts.set(r.gpu_name, (tierCounts.get(r.gpu_name) || 0) + 1);
+    const tierStr = [...tierCounts.entries()]
+      .map(([n, c]) => c > 1 ? `${n.replace(/^(NVIDIA |Tesla )/, "")} × ${c}` : n.replace(/^(NVIDIA |Tesla )/, ""))
+      .join(" + ");
+    subParts.push(tierStr);
+  } else {
+    subParts.push("no replicas responding");
+  }
+  if (down) subParts.push(`${down} down`);
+  document.getElementById("replicas-sub").textContent = subParts.join(" · ");
+
+  // Per-replica pills: short tier label + current inflight/capacity. Hover
+  // shows the full gpu_name + uptime via title attribute.
+  const pillsEl = document.getElementById("replicas-pills");
+  pillsEl.innerHTML = per.map(r => {
+    const short = (r.gpu_name || "?").replace(/^(NVIDIA |Tesla )/, "");
+    const busy = r.inflight > 0;
+    const dotColor = busy ? "var(--warn)" : "var(--accent)";
+    const title = `${r.gpu_name || "unknown"} · uptime ${fmtDuration(r.uptime_s)} · total ${(r.total_requests ?? 0).toLocaleString()}`;
+    return `<span class="replica-pill" title="${title}"><span class="dot" style="background: ${dotColor}"></span>${short} ${r.inflight}/${r.capacity}</span>`;
+  }).join("");
+}
+
+function renderDaily(a) {
+  const days = a.requests_by_day || [];
+  dailyChart.data.labels = days.map(d => d.date.slice(5));  // MM-DD
+  dailyChart.data.datasets[0].data = days.map(d => d.count);
+  dailyChart.update("none");
+}
+
+function renderShapeList(a) {
+  const by = a.by_shape || {};
+  const entries = Object.entries(by).sort((x, y) => y[1].count - x[1].count);
+  const tbody = document.getElementById("shape-tbody");
+  if (!entries.length) {
+    tbody.innerHTML = `<tr><td colspan="3" class="metric-sub">no requests yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = entries.map(([shape, b]) => `
+    <tr>
+      <td>${shape}</td>
+      <td class="num">${b.count.toLocaleString()}</td>
+      <td class="num">${fmtMs(b.duration_ms_avg)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderByGPU(a) {
+  const by = a.by_gpu || {};
+  const entries = Object.entries(by).sort((x, y) => y[1].count - x[1].count);
+  const tbody = document.getElementById("gpu-tbody");
+  if (!entries.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="metric-sub">no per-GPU data yet</td></tr>`;
+    return;
+  }
+  // Dropped the explicit Success column from this table when we shrunk it
+  // into a 3-col row — success is implied by count - errors and rarely
+  // useful at a glance. Error count gets the warn color when nonzero.
+  const shortName = (n) => (n || "—").replace(/^(NVIDIA |Tesla )/, "");
+  tbody.innerHTML = entries.map(([name, b]) => `
+    <tr>
+      <td>${shortName(name)}</td>
+      <td class="num">${(b.replicas ?? 0).toLocaleString()}</td>
+      <td class="num">${b.count.toLocaleString()}</td>
+      <td class="num ${(b.errors ?? 0) > 0 ? "status-err" : ""}">${(b.errors ?? 0).toLocaleString()}</td>
+      <td class="num">${fmtMs(b.duration_ms_avg)}</td>
+    </tr>
+  `).join("");
+}
+
+// Today-scoped mirrors of renderShapeList / renderByGPU. Same shape of input
+// from metrics_pusher (count + duration_ms_avg per key) so the table markup
+// matches; columns are trimmed since today's per-GPU bucket doesn't carry
+// replicas/success/errors splits.
+function renderShapeToday(a) {
+  const by = a.by_shape_today || {};
+  const entries = Object.entries(by).sort((x, y) => y[1].count - x[1].count);
+  const tbody = document.getElementById("shape-today-tbody");
+  if (!entries.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="metric-sub">no requests yet today</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = entries.map(([shape, b]) => `
+    <tr>
+      <td>${shape}</td>
+      <td class="num">${b.count.toLocaleString()}</td>
+      <td class="num">${fmtMs(b.duration_ms_avg)}</td>
+      <td class="num">${fmtMs(b.queue_ms_avg)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderGpuToday(a) {
+  const by = a.by_gpu_today || {};
+  const entries = Object.entries(by).sort((x, y) => y[1].count - x[1].count);
+  const tbody = document.getElementById("gpu-today-tbody");
+  if (!entries.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="metric-sub">no requests yet today</td></tr>`;
+    return;
+  }
+  // Drop "NVIDIA " / "Tesla " prefix to keep the GPU column narrow in the
+  // 3-column row layout.
+  const shortName = (n) => (n || "—").replace(/^(NVIDIA |Tesla )/, "");
+  tbody.innerHTML = entries.map(([name, b]) => `
+    <tr>
+      <td>${shortName(name)}</td>
+      <td class="num">${b.count.toLocaleString()}</td>
+      <td class="num">${fmtMs(b.duration_ms_avg)}</td>
+      <td class="num">${fmtMs(b.queue_ms_avg)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderLatency(a) {
+  // Latency uses the last-50 window (recent_by_shape) so the numbers feel
+  // current — long-term shape avg is on the by-resolution table above.
+  document.getElementById("avg-latency").textContent = fmtMs(a.recent_avg_latency_ms);
+  const n = a.recent_count ?? 0;
+  document.getElementById("avg-latency-sub").textContent = `across last ${n.toLocaleString()} requests`;
+  const by = a.recent_by_shape || {};
+  const entries = Object.entries(by).sort((x, y) => y[1].count - x[1].count);
+  const tbody = document.getElementById("latency-tbody");
+  if (!entries.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="metric-sub">no recent requests yet</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = entries.map(([shape, b]) => `
+    <tr>
+      <td>${shape}</td>
+      <td class="num">${b.count.toLocaleString()}</td>
+      <td class="num">${fmtMs(b.duration_ms_avg)}</td>
+      <td class="num">${fmtMs(b.queue_ms_avg)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderHourly(a) {
+  // Today's by-hour, 24 ints indexed by UTC hour
+  const buckets = a.requests_by_hour || [];
+  hourlyChart.data.labels = buckets.map((_, i) => `${i.toString().padStart(2, "0")}:00`);
+  hourlyChart.data.datasets[0].data = buckets;
+  hourlyChart.update("none");
+}
+
+function renderRecent(a) {
+  const rows = (a.recent || []).slice().reverse().slice(0, 50);
+  const tbody = document.getElementById("recent-tbody");
+  // GPU shorthand: drop the "NVIDIA " prefix so the column stays narrow
+  // ("L40S" / "A10G" reads cleaner than "NVIDIA L40S"). Older recent entries
+  // (pre-feature) won't have r.gpu — fall back to "—".
+  const shortGpu = (g) => (g || "—").replace(/^(NVIDIA |Tesla )/, "");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${fmtRelative(r.ts)}</td>
+      <td>${r.shape || "—"}</td>
+      <td>${shortGpu(r.gpu)}</td>
+      <td class="num">${r.queue_ms != null ? fmtMs(r.queue_ms) : "—"}</td>
+      <td class="num">${r.duration_ms ? (r.duration_ms / 1000).toFixed(1) + "s" : "—"}</td>
+      <td>${(r.ip_hash || "—").slice(0, 8)}</td>
+      <td class="${r.ok ? "status-ok" : "status-err"}">${r.ok ? "ok" : "err"}</td>
+    </tr>
+  `).join("");
+}
+
+function renderGPUs(g) {
+  const div = document.getElementById("gpus");
+  const gpus = g.gpus || [];
+  if (!gpus.length) {
+    div.innerHTML = `<div class="metric-sub">${g.error || "no GPU data yet"}</div>`;
+    return;
+  }
+  div.innerHTML = gpus.map(gpu => {
+    const memPct = gpu.memory_total_mb ? Math.round(100 * (gpu.memory_used_mb || 0) / gpu.memory_total_mb) : 0;
+    const util = gpu.util_pct ?? 0;
+    return `
+      <div style="margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between;"><span><b>GPU ${gpu.index}</b> ${gpu.name || ""}</span><span class="metric-sub">${gpu.temp_c ?? "—"}°C · ${gpu.power_w ? gpu.power_w.toFixed(0) : "—"}W</span></div>
+        <div class="metric-sub" style="margin-top: 4px;">util ${util}%</div>
+        <div class="gpu-bar"><div class="gpu-bar-fill" style="width: ${util}%"></div></div>
+        <div class="metric-sub" style="margin-top: 4px;">mem ${gpu.memory_used_mb ?? "—"} / ${gpu.memory_total_mb ?? "—"} MB (${memPct}%)</div>
+        <div class="gpu-bar"><div class="gpu-bar-fill" style="width: ${memPct}%; background: #d97757;"></div></div>
+      </div>
+    `;
+  }).join("");
+  document.getElementById("footer").textContent = `GPU sample: ${fmtRelative(g.ts)}`;
+}
+
+// Refresh cadence: default 2s, override with `#refresh=N` in the URL
+// (where N is seconds, e.g. #refresh=1 for 1s, #refresh=0.5 for 500ms).
+// metrics_pusher writes JSON every 2s by default — polling faster than
+// that just re-reads the same file. Bump METRICS_INTERVAL env on the
+// Space too if you genuinely need sub-2s.
+function readRefreshMs() {
+  const m = (location.hash || "").match(/refresh=([0-9.]+)/);
+  if (m) {
+    const v = parseFloat(m[1]);
+    if (v >= 0.25 && v <= 60) return Math.round(v * 1000);
+  }
+  return 2000;
+}
+const REFRESH_MS = readRefreshMs();
+document.getElementById("refresh-label").textContent = `auto-refresh every ${(REFRESH_MS / 1000).toString()}s`;
+
+initCharts();
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

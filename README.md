@@ -24,7 +24,7 @@ grep -i vllm
 # kill app by prort
 kill -9 $(lsof -t -i :3000)
 # kill app by prorts
-for port in 7999 8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010; do
+for port in 7999 8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010 8011; do
   lsof -t -i :"$port"
 done | xargs -r kill -9
 ```

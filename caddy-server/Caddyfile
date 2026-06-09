@@ -59,3 +59,11 @@
 :7998 {
 	reverse_proxy localhost:8010
 }
+
+# Bonsai-Image (docker / nginx+Next.js) — studio frontend'i mutlak yollar
+# (/generate, /backends, /api/*) kullandığından subpath altında çalışmaz;
+# kök yolda kendi portunda yayınlanır. Container içeride :7860'a bind eder,
+# host'ta :8011'e maplenir (bkz. bonsai-image/cli.sh).
+:7997 {
+	reverse_proxy localhost:8011
+}
